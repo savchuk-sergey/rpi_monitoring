@@ -4,16 +4,22 @@ from datetime import datetime, timezone
 from PIL import Image, ImageColor
 
 from display.drivers.ili9341 import ILI9341, rgb565
+from display.categories import category, category_at, detail_view_at, metric_at
+from display.gestures import GestureKind, TouchRecognizer
+from display.history import HistoryStore
 from display.navigation import (
     FOOTER_TOP,
     MODE_HITBOX,
     NAV_WIDTH,
     NEXT_HITBOX,
     PREVIOUS_HITBOX,
-    TouchDebouncer,
+    DetailView,
+    UiState,
+    ViewMode,
     map_touch,
     move,
     selected_index,
+    should_return_to_overview,
     touch_action,
 )
 from display.renderer import (
@@ -25,8 +31,12 @@ from display.renderer import (
     MUTED,
     RED,
     _age,
+    _format_bytes_pair,
+    _format_clock,
     _format_power,
+    _format_rate,
     _format_temperature,
+    _format_uptime,
     _number,
     _status,
     _value,
@@ -81,7 +91,10 @@ class DisplayTests(unittest.TestCase):
     def test_renderer_is_320_by_240_for_waiting_and_node_states(self) -> None:
         self.assertEqual((320, 240), render(None).size)
         self.assertEqual((320, 240), render(node(), (1, 4)).size)
-        self.assertEqual((320, 240), render(node(), mode="details").size)
+        state = UiState(mode=ViewMode.DETAIL)
+        self.assertEqual((320, 240), render(node(), ui_state=state).size)
+        state.mode = ViewMode.MENU
+        self.assertEqual((320, 240), render(node(), ui_state=state).size)
 
     def test_renderer_distinguishes_empty_offline_and_stale_states(self) -> None:
         self.assertNotEqual(render(None).tobytes(), render(None, hub_online=False).tobytes())
@@ -124,7 +137,7 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(3, move(0, 4, -1))
         self.assertEqual(0, move(0, 0, 1))
         self.assertEqual(
-            ("previous", "mode", "next"),
+            ("previous", "center", "next"),
             (touch_action(0, 239), touch_action(160, 239), touch_action(319, 239)),
         )
         self.assertEqual(
@@ -138,7 +151,6 @@ class DisplayTests(unittest.TestCase):
         )
         self.assertIsNone(touch_action(0, FOOTER_TOP - 1))
         self.assertIsNone(touch_action(160, 110))
-        self.assertEqual("gpu", touch_action(160, 110, details=True))
 
     def test_selection_tracks_node_id_across_reordering(self) -> None:
         nodes = [node(node_id="a"), node(node_id="b"), node(node_id="c")]
@@ -152,14 +164,152 @@ class DisplayTests(unittest.TestCase):
             index = move(index, 4, 1)
         self.assertEqual(0, index)
 
-    def test_debounce_requires_release_and_time(self) -> None:
-        debounce = TouchDebouncer(0.25)
-        self.assertTrue(debounce.update(True, 1.0))
-        self.assertFalse(debounce.update(True, 2.0))
-        self.assertFalse(debounce.update(False, 2.1))
-        self.assertFalse(debounce.update(True, 1.1))
-        debounce.update(False, 2.2)
-        self.assertTrue(debounce.update(True, 2.3))
+    def test_short_gesture_only_emits_after_release(self) -> None:
+        recognizer = TouchRecognizer()
+        self.assertIsNone(recognizer.update(True, 100, 210, 1.0))
+        self.assertIsNone(recognizer.update(True, 102, 211, 1.2))
+        gesture = recognizer.update(False, now=1.3)
+        self.assertEqual(GestureKind.SHORT, gesture.kind)
+        self.assertEqual((101, 210), (gesture.x, gesture.y))
+
+    def test_long_gesture_emits_once_with_resistive_jitter(self) -> None:
+        recognizer = TouchRecognizer()
+        recognizer.update(True, 100, 210, 1.0)
+        for now, point in ((1.2, (108, 214)), (1.4, (92, 205)), (1.66, (105, 212))):
+            gesture = recognizer.update(True, *point, now)
+        self.assertEqual(GestureKind.LONG, gesture.kind)
+        self.assertIsNone(recognizer.update(True, 103, 208, 2.0))
+        self.assertIsNone(recognizer.update(False, now=2.1))
+
+    def test_large_touch_movement_cancels_the_gesture(self) -> None:
+        recognizer = TouchRecognizer()
+        recognizer.update(True, 100, 210, 1.0)
+        self.assertIsNone(recognizer.update(True, 130, 210, 1.2))
+        self.assertIsNone(recognizer.update(True, 132, 211, 1.25))
+        self.assertIsNone(recognizer.update(False, now=1.3))
+
+    def test_category_registry_and_fixed_menu_geometry(self) -> None:
+        value = node()
+        self.assertEqual("cpu", category_at(10, 40).id)
+        self.assertEqual("network", category_at(160, 120).id)
+        self.assertTrue(category("cpu").available(value))
+        self.assertFalse(category("storage").available(value))
+        self.assertEqual(100.0, category("cpu").metrics[0].maximum)
+        self.assertEqual("temperature", metric_at("cpu", 150, 50).id)
+        self.assertEqual("values", detail_view_at(80, 68))
+        self.assertEqual("graph", detail_view_at(240, 68))
+
+    def test_ui_state_keeps_available_category_across_nodes(self) -> None:
+        state = UiState()
+        first = node(node_id="a", gpu=[{"usage_percent": 20}])
+        second = node(node_id="b")
+        state.select_category(first, "health")
+        self.assertEqual("health", state.category_id(first))
+        self.assertEqual("health", state.category_id(second))
+
+    def test_detail_and_menu_timeouts_return_to_overview(self) -> None:
+        state = UiState(mode=ViewMode.DETAIL, last_interaction_at=10.0)
+        self.assertFalse(should_return_to_overview(state, 54.9, 45, 15, False))
+        self.assertTrue(should_return_to_overview(state, 55.0, 45, 15, False))
+        self.assertFalse(should_return_to_overview(state, 60.0, 45, 15, True))
+        state.mode = ViewMode.MENU
+        self.assertTrue(should_return_to_overview(state, 25.0, 45, 15, False))
+
+    def test_history_deduplicates_timestamps_and_keeps_null_gaps(self) -> None:
+        history = HistoryStore(window_seconds=300, max_samples=3)
+        first = node(timestamp_utc="2026-07-12T03:00:00Z")
+        self.assertTrue(history.add(first))
+        self.assertFalse(history.add(first))
+        offline = node(
+            timestamp_utc="2026-07-12T03:00:02Z",
+            online=False,
+        )
+        self.assertTrue(history.add(offline))
+        samples = history.series("desktop", "cpu", "load")
+        self.assertEqual((47.0, None), tuple(sample.value for sample in samples))
+        self.assertFalse(history.add(node(timestamp_utc="2026-07-12T03:00:04Z"), False))
+
+        short_window = HistoryStore(window_seconds=3, max_samples=10)
+        for second in (0, 2, 4):
+            short_window.add(node(timestamp_utc=f"2026-07-12T03:00:0{second}Z"))
+        self.assertEqual(
+            2,
+            len(short_window.series("desktop", "cpu", "load")),
+        )
+
+    def test_detail_graph_renders_history_without_treating_null_as_zero(self) -> None:
+        history = HistoryStore()
+        value = node(timestamp_utc="2026-07-12T03:00:00Z")
+        history.add(value)
+        history.add(node(timestamp_utc="2026-07-12T03:00:02Z", online=False))
+        state = UiState(mode=ViewMode.DETAIL, detail_view=DetailView.GRAPH)
+        graph = render(
+            value,
+            ui_state=state,
+            history=history,
+            now=datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc),
+        )
+        state.detail_view = DetailView.VALUES
+        values = render(value, ui_state=state, history=history)
+        self.assertEqual((320, 240), graph.size)
+        self.assertNotEqual(graph.tobytes(), values.tobytes())
+
+    def test_v2_values_and_history_use_extended_metrics(self) -> None:
+        value = node(
+            cpu={"usage_percent": 47, "temperature_c": 63, "power_w": 55, "clock_mhz": 4725},
+            memory={
+                "usage_percent": 63,
+                "used_bytes": 24 * 1024**3,
+                "total_bytes": 32 * 1024**3,
+                "swap_used_bytes": 2 * 1024**3,
+                "swap_total_bytes": 8 * 1024**3,
+                "swap_usage_percent": 25,
+                "pressure_some_percent": 1.25,
+            },
+            gpu=[{
+                "id": "0", "name": "RTX", "usage_percent": 81, "temperature_c": 69,
+                "power_w": 117, "memory_used_bytes": 6 * 1024**3,
+                "memory_total_bytes": 12 * 1024**3, "memory_usage_percent": 50,
+                "fan_percent": 74, "clock_mhz": 2625,
+            }],
+            health={"uptime_seconds": 90000, "undervoltage": False, "throttled": False},
+            storage={
+                "name": "/", "usage_percent": 60, "used_bytes": 60 * 1024**3,
+                "total_bytes": 100 * 1024**3, "read_bytes_per_second": 1250000,
+                "write_bytes_per_second": 640000, "temperature_c": 42,
+            },
+            network={
+                "interface": "eth0", "link_up": True,
+                "down_bytes_per_second": 12500000, "up_bytes_per_second": 2500000,
+            },
+        )
+        history = HistoryStore()
+        history.add(value)
+        self.assertEqual(4725, history.series("desktop", "cpu", "clock")[0].value)
+        self.assertEqual(25, history.series("desktop", "memory", "swap")[0].value)
+        self.assertEqual(50, history.series("desktop", "gpu", "vram")[0].value)
+        self.assertEqual(60, history.series("desktop", "storage", "used")[0].value)
+        self.assertEqual(12500000, history.series("desktop", "network", "down")[0].value)
+
+        state = UiState(mode=ViewMode.DETAIL)
+        cpu = render(value, ui_state=state, history=history)
+        state.select_category(value, "memory")
+        memory = render(value, ui_state=state, history=history)
+        state.select_category(value, "gpu")
+        gpu = render(value, ui_state=state, history=history)
+        state.select_category(value, "health")
+        health = render(value, ui_state=state, history=history)
+        state.select_category(value, "storage")
+        storage = render(value, ui_state=state, history=history)
+        state.select_category(value, "network")
+        network = render(value, ui_state=state, history=history)
+        frames = (cpu, memory, gpu, health, storage, network)
+        self.assertEqual({(320, 240)}, {frame.size for frame in frames})
+        self.assertEqual(6, len({frame.tobytes() for frame in frames}))
+        self.assertEqual("4.72G", _format_clock(4725))
+        self.assertEqual("24.0/32.0GiB", _format_bytes_pair(24 * 1024**3, 32 * 1024**3))
+        self.assertEqual("1d01h", _format_uptime(90000))
+        self.assertEqual("11.9M/s", _format_rate(12500000))
 
     def test_calibration_maps_and_clamps_coordinates(self) -> None:
         calibration = {

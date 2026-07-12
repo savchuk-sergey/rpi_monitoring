@@ -7,9 +7,13 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 
-SCHEMA = json.loads(Path(__file__).with_name("telemetry-v1.schema.json").read_text())
-Draft202012Validator.check_schema(SCHEMA)
-VALIDATOR = Draft202012Validator(SCHEMA)
+SCHEMAS = {
+    version: json.loads(Path(__file__).with_name(f"telemetry-v{version}.schema.json").read_text())
+    for version in (1, 2)
+}
+for schema in SCHEMAS.values():
+    Draft202012Validator.check_schema(schema)
+VALIDATORS = {version: Draft202012Validator(schema) for version, schema in SCHEMAS.items()}
 
 
 def load_sample(raw: str | bytes) -> dict[str, Any]:
@@ -29,7 +33,11 @@ def validate_sample(sample: Any) -> None:
     if not _finite(sample):
         raise ValueError("telemetry sample contains a non-finite number")
 
-    error = next(VALIDATOR.iter_errors(sample), None)
+    version = sample.get("schema_version")
+    validator = VALIDATORS.get(version) if isinstance(version, int) and not isinstance(version, bool) else None
+    if validator is None:
+        raise ValueError("schema_version: unsupported telemetry schema")
+    error = next(validator.iter_errors(sample), None)
     if error:
         path = ".".join(map(str, error.absolute_path)) or "$"
         raise ValueError(f"{path}: {error.message}")

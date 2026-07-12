@@ -23,8 +23,25 @@ class TelemetrySchemaTests(unittest.TestCase):
         validate_sample(json.loads((EXAMPLES / "linux.json").read_text()))
 
     def test_unsupported_schema_version_is_rejected(self) -> None:
-        self.sample["schema_version"] = 2
+        self.sample["schema_version"] = 3
         self.assert_invalid(self.sample)
+
+    def test_v2_rejects_invalid_extended_metrics(self) -> None:
+        sample = json.loads((EXAMPLES / "windows-v2.json").read_text())
+        sample["gpu"][0]["fan_percent"] = 101
+        self.assert_invalid(sample)
+        sample = json.loads((EXAMPLES / "windows-v2.json").read_text())
+        sample["memory"]["used_bytes"] = -1
+        self.assert_invalid(sample)
+
+    def test_v2_requires_declared_shape_and_allows_null_capabilities(self) -> None:
+        sample = json.loads((EXAMPLES / "windows-v2.json").read_text())
+        sample["cpu"]["clock_mhz"] = None
+        sample["memory"]["pressure_some_percent"] = None
+        sample["gpu"][0]["fan_percent"] = None
+        validate_sample(sample)
+        sample["health"]["extra"] = True
+        self.assert_invalid(sample)
 
     def test_non_finite_numbers_are_rejected(self) -> None:
         for value in (math.nan, math.inf, -math.inf):

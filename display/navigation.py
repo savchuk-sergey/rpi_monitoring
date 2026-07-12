@@ -1,4 +1,5 @@
-import time
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 
@@ -8,7 +9,52 @@ Rect = tuple[int, int, int, int]
 PREVIOUS_HITBOX: Rect = (0, FOOTER_TOP, 61, 240)
 MODE_HITBOX: Rect = (67, FOOTER_TOP, 253, 240)
 NEXT_HITBOX: Rect = (259, FOOTER_TOP, 320, 240)
-GPU_HITBOX: Rect = (64, 82, 256, 146)
+
+
+class ViewMode(Enum):
+    OVERVIEW = "overview"
+    MENU = "menu"
+    DETAIL = "detail"
+
+
+class DetailView(Enum):
+    VALUES = "values"
+    GRAPH = "graph"
+
+
+@dataclass
+class UiState:
+    mode: ViewMode = ViewMode.OVERVIEW
+    selected_node_id: str | None = None
+    selected_category_id: str = "cpu"
+    metric_by_category: dict[str, str] = field(default_factory=dict)
+    selected_gpu_index: int = 0
+    detail_view: DetailView = DetailView.VALUES
+    last_interaction_at: float = 0.0
+
+    def category_id(self, node: dict[str, Any]) -> str:
+        from display.categories import category, default_category
+
+        selected = self.selected_category_id
+        if category(selected).id != selected or not category(selected).available(node):
+            selected = default_category(node).id
+            self.selected_category_id = selected
+        return selected
+
+    def metric_id(self, node: dict[str, Any]) -> str:
+        from display.categories import category
+
+        category_id = self.category_id(node)
+        metrics = category(category_id).metrics
+        selected = self.metric_by_category.get(category_id)
+        if metrics and selected not in {metric.id for metric in metrics}:
+            selected = metrics[0].id
+            self.metric_by_category[category_id] = selected
+        return selected or ""
+
+    def select_category(self, node: dict[str, Any], category_id: str) -> None:
+        self.selected_category_id = category_id
+        self.metric_id(node)
 
 
 def move(index: int, count: int, delta: int) -> int:
@@ -23,16 +69,25 @@ def selected_index(
                 return index
     return min(max(0, fallback), max(0, len(nodes) - 1))
 
+def should_return_to_overview(
+    state: UiState,
+    now: float,
+    detail_timeout: float,
+    menu_timeout: float,
+    pressed: bool,
+) -> bool:
+    if state.mode == ViewMode.OVERVIEW or pressed:
+        return False
+    timeout = menu_timeout if state.mode == ViewMode.MENU else detail_timeout
+    return timeout > 0 and now - state.last_interaction_at >= timeout
 
-def touch_action(x: int, y: int, details: bool = False) -> str | None:
-    hitboxes = (
+
+def touch_action(x: int, y: int) -> str | None:
+    for action, (left, top, right, bottom) in (
         ("previous", PREVIOUS_HITBOX),
-        ("mode", MODE_HITBOX),
+        ("center", MODE_HITBOX),
         ("next", NEXT_HITBOX),
-    )
-    if details:
-        hitboxes += (("gpu", GPU_HITBOX),)
-    for action, (left, top, right, bottom) in hitboxes:
+    ):
         if left <= x < right and top <= y < bottom:
             return action
     return None
@@ -50,19 +105,7 @@ def map_touch(raw_x: int, raw_y: int, calibration: dict[str, Any]) -> tuple[int,
     return x, y
 
 
-class TouchDebouncer:
-    def __init__(self, debounce_seconds: float = 0.25):
-        self.debounce_seconds = debounce_seconds
-        self.was_pressed = False
-        self.last_event = 0.0
 
-    def update(self, pressed: bool, now: float | None = None) -> bool:
-        now = time.monotonic() if now is None else now
-        event = pressed and not self.was_pressed and now - self.last_event >= self.debounce_seconds
-        self.was_pressed = pressed
-        if event:
-            self.last_event = now
-        return event
 
 
 def _scale(value: int, low: int, high: int, output_max: int) -> int:

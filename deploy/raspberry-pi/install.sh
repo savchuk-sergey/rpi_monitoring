@@ -11,6 +11,7 @@ for user in homelab-monitor homelab-monitor-display homelab-monitor-agent; do
     id "$user" >/dev/null 2>&1 || useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$user"
 done
 usermod -a -G gpio,spi homelab-monitor-display
+usermod -a -G video homelab-monitor-agent
 
 install -d -o root -g root -m 0755 /opt/homelab-resource-monitor
 cp -a "$source_dir/agents" "$source_dir/display" "$source_dir/hub" "$source_dir/protocol" "$source_dir/pyproject.toml" /opt/homelab-resource-monitor/
@@ -34,7 +35,7 @@ PY
     rm -f /tmp/hub.json /tmp/linux-agent.json
 fi
 install -o homelab-monitor-display -g homelab-monitor-display -m 0600 "$calibration" /etc/homelab-resource-monitor/touch-calibration.json
-printf '%s\n' '{"state_url":"http://127.0.0.1:8766/api/v1/state","calibration_file":"/etc/homelab-resource-monitor/touch-calibration.json","lcd_speed_hz":16000000,"touch_speed_hz":2000000,"auto_rotate_seconds":0,"pause_after_touch_seconds":30}' >/tmp/display.json
+printf '%s\n' '{"state_url":"http://127.0.0.1:8766/api/v1/state","calibration_file":"/etc/homelab-resource-monitor/touch-calibration.json","lcd_speed_hz":16000000,"touch_speed_hz":2000000,"auto_rotate_seconds":0,"pause_after_touch_seconds":30,"long_press_seconds":0.65,"movement_tolerance_pixels":16,"release_debounce_seconds":0.15,"minimum_short_press_seconds":0.05,"detail_timeout_seconds":45,"menu_timeout_seconds":15,"history_window_seconds":300,"history_max_samples":180}' >/tmp/display.json
 install -o homelab-monitor-display -g homelab-monitor-display -m 0600 /tmp/display.json /etc/homelab-resource-monitor/display.json
 rm -f /tmp/display.json
 
