@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "node_id": "desktop",
+  "display_name": "Desktop",
+  "timestamp_utc": "2026-07-12T03:00:00Z",
+  "os": { "family": "windows", "version": "Windows 11" },
+  "cpu": {
+    "usage_percent": 34.5,
+    "temperature_c": 61.0,
+    "power_w": 28.4
+  },
+  "memory": { "usage_percent": 72.1 },
+  "gpu": [
+    {
+      "id": "0",
+      "name": "NVIDIA GPU",
+      "usage_percent": 81.0,
+      "temperature_c": 69.0,
+      "power_w": 117.0
+    }
+  ],
+  "collector": { "version": "0.1.0", "errors": [] }
+}

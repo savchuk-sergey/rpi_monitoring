@@ -1,0 +1,7 @@
+{
+  "hub_url": "http://192.168.31.94:8765/api/v1/telemetry",
+  "node_id": "desktop",
+  "display_name": "Desktop",
+  "token": "replace-with-at-least-32-random-characters",
+  "interval_seconds": 2
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=Homelab Resource Monitor SPI display
+Wants=homelab-resource-monitor-hub.service
+After=homelab-resource-monitor-hub.service
+
+[Service]
+Type=simple
+User=homelab-monitor-display
+Group=homelab-monitor-display
+SupplementaryGroups=gpio spi
+ExecStart=/opt/homelab-resource-monitor/.venv/bin/python -m display.app --config /etc/homelab-resource-monitor/display.json
+WorkingDirectory=/opt/homelab-resource-monitor
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

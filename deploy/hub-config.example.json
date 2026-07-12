@@ -1,0 +1,6 @@
+{
+  "offline_seconds": 10,
+  "token_sha256": {
+    "display-rpi": "replace-with-lowercase-sha256-hex"
+  }
+}

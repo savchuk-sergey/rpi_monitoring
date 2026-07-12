@@ -1,0 +1,26 @@
+[Unit]
+Description=Homelab Resource Monitor Linux telemetry agent
+Wants=network-online.target
+Wants=homelab-resource-monitor-rapl-permissions.service
+After=network-online.target homelab-resource-monitor-hub.service homelab-resource-monitor-rapl-permissions.service
+
+[Service]
+Type=simple
+User=homelab-monitor-agent
+Group=homelab-monitor-agent
+Environment=PYTHONPATH=/opt/homelab-resource-monitor/app
+ExecStart=/usr/bin/python3 -m agents.linux.agent --config /etc/homelab-resource-monitor/linux-agent.json
+WorkingDirectory=/opt/homelab-resource-monitor/app
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

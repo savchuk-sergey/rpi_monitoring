@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homelab.invalid/schemas/telemetry-v1.schema.json",
+  "title": "Homelab resource telemetry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "node_id",
+    "display_name",
+    "timestamp_utc",
+    "os",
+    "cpu",
+    "memory",
+    "gpu",
+    "collector"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "os": { "$ref": "#/$defs/os" },
+    "cpu": { "$ref": "#/$defs/processor" },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usage_percent"],
+      "properties": {
+        "usage_percent": { "$ref": "#/$defs/percentage" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["power_w"],
+      "properties": {
+        "power_w": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "gpu": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/gpu" }
+    },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "errors"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 256 },
+          "maxItems": 32
+        }
+      }
+    }
+  },
+  "$defs": {
+    "percentage": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100
+    },
+    "measurement": {
+      "type": ["number", "null"]
+    },
+    "os": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "version"],
+      "properties": {
+        "family": { "enum": ["linux", "windows"] },
+        "version": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "processor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usage_percent", "temperature_c", "power_w"],
+      "properties": {
+        "usage_percent": { "$ref": "#/$defs/percentage" },
+        "temperature_c": { "$ref": "#/$defs/measurement" },
+        "power_w": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "gpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "usage_percent",
+        "temperature_c",
+        "power_w"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "usage_percent": { "$ref": "#/$defs/percentage" },
+        "temperature_c": { "$ref": "#/$defs/measurement" },
+        "power_w": { "$ref": "#/$defs/measurement" }
+      }
+    }
+  }
+}

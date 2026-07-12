@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "node_id": "display-rpi",
+  "display_name": "Raspberry Pi",
+  "timestamp_utc": "2026-07-12T03:00:00Z",
+  "os": { "family": "linux", "version": "Debian 13" },
+  "cpu": {
+    "usage_percent": 12.5,
+    "temperature_c": 46.2,
+    "power_w": null
+  },
+  "memory": { "usage_percent": 17.5 },
+  "device": { "power_w": null },
+  "gpu": [],
+  "collector": { "version": "0.1.0", "errors": [] }
+}

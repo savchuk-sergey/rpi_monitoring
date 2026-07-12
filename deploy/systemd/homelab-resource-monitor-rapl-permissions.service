@@ -1,0 +1,10 @@
+[Unit]
+Description=Grant the resource monitor read-only access to RAPL energy counters
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for file in /sys/class/powercap/intel-rapl:*/energy_uj; do [ -f "$file" ] || continue; chgrp homelab-monitor-agent "$file"; chmod 0440 "$file"; done'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

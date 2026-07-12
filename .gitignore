@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.serena/
+**/bin/
+**/obj/
+build/
+artifacts/evidence/
+artifacts/linux-agent/
+artifacts/windows-agent/
+deploy/windows/windows-agent.json
