@@ -3,18 +3,39 @@ from typing import Any
 
 
 NAV_WIDTH = 64
+FOOTER_TOP = 192
+Rect = tuple[int, int, int, int]
+PREVIOUS_HITBOX: Rect = (0, FOOTER_TOP, 61, 240)
+MODE_HITBOX: Rect = (67, FOOTER_TOP, 253, 240)
+NEXT_HITBOX: Rect = (259, FOOTER_TOP, 320, 240)
+GPU_HITBOX: Rect = (64, 82, 256, 146)
 
 
 def move(index: int, count: int, delta: int) -> int:
     return (index + delta) % count if count else 0
 
+def selected_index(
+    nodes: list[dict[str, Any]], node_id: str | None, fallback: int = 0
+) -> int:
+    if node_id is not None:
+        for index, node in enumerate(nodes):
+            if node.get("node_id") == node_id:
+                return index
+    return min(max(0, fallback), max(0, len(nodes) - 1))
 
-def touch_action(x: int) -> int:
-    if x < NAV_WIDTH:
-        return -1
-    if x >= 320 - NAV_WIDTH:
-        return 1
-    return 0
+
+def touch_action(x: int, y: int, details: bool = False) -> str | None:
+    hitboxes = (
+        ("previous", PREVIOUS_HITBOX),
+        ("mode", MODE_HITBOX),
+        ("next", NEXT_HITBOX),
+    )
+    if details:
+        hitboxes += (("gpu", GPU_HITBOX),)
+    for action, (left, top, right, bottom) in hitboxes:
+        if left <= x < right and top <= y < bottom:
+            return action
+    return None
 
 
 def map_touch(raw_x: int, raw_y: int, calibration: dict[str, Any]) -> tuple[int, int]:

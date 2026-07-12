@@ -1,7 +1,7 @@
 import time
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 
 WIDTH = 320
@@ -16,6 +16,7 @@ class ILI9341:
         self.gpio = GPIO
         self.dc = 25
         self.reset = 24
+        self.last_timing_ms = (0.0, 0.0)
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
         GPIO.setup((self.dc, self.reset), GPIO.OUT, initial=GPIO.HIGH)
@@ -60,12 +61,35 @@ class ILI9341:
         time.sleep(0.02)
 
     def show(self, image: Image.Image) -> None:
+        self.show_region(image, (0, 0, WIDTH, HEIGHT))
+
+    def show_region(
+        self, image: Image.Image, box: tuple[int, int, int, int]
+    ) -> None:
         if image.size != (WIDTH, HEIGHT):
             raise ValueError(f"image must be {WIDTH}x{HEIGHT}")
-        self._write(0x2A, b"\x00\x00\x01\x3f")
-        self._write(0x2B, b"\x00\x00\x00\xef")
+        left, top, right, bottom = box
+        if not (0 <= left < right <= WIDTH and 0 <= top < bottom <= HEIGHT):
+            raise ValueError("region is outside the display")
+
+        conversion_start = time.perf_counter()
+        data = rgb565(image.crop(box))
+        conversion_ms = (time.perf_counter() - conversion_start) * 1000
+        transfer_start = time.perf_counter()
+        self._write(
+            0x2A,
+            left.to_bytes(2, "big") + (right - 1).to_bytes(2, "big"),
+        )
+        self._write(
+            0x2B,
+            top.to_bytes(2, "big") + (bottom - 1).to_bytes(2, "big"),
+        )
         self._command(0x2C)
-        self._data(rgb565(image))
+        self._data(data)
+        self.last_timing_ms = (
+            conversion_ms,
+            (time.perf_counter() - transfer_start) * 1000,
+        )
 
     def close(self) -> None:
         # The module has no reset pull-up; releasing RESET blanks the panel.
@@ -87,12 +111,14 @@ class ILI9341:
             self.spi.writebytes2(data[offset : offset + 4096])
 
 
-def rgb565(image: Image.Image) -> bytearray:
-    source = image.convert("RGB").tobytes()
-    output = bytearray(len(source) // 3 * 2)
-    for source_offset in range(0, len(source), 3):
-        red, green, blue = source[source_offset : source_offset + 3]
-        value = (red & 0xF8) << 8 | (green & 0xFC) << 3 | blue >> 3
-        target = source_offset // 3 * 2
-        output[target : target + 2] = value.to_bytes(2, "big")
-    return output
+def rgb565(image: Image.Image) -> bytes:
+    red, green, blue = image.convert("RGB").split()
+    high = ImageChops.add(
+        red.point(lambda value: value & 0xF8),
+        green.point(lambda value: value >> 5),
+    )
+    low = ImageChops.add(
+        green.point(lambda value: (value & 0x1C) << 3),
+        blue.point(lambda value: value >> 3),
+    )
+    return Image.merge("LA", (high, low)).tobytes()
