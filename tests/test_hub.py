@@ -31,6 +31,31 @@ def sample(node_id: str = "desktop", age: timedelta = timedelta()) -> dict:
     }
 
 
+def sample_v2() -> dict:
+    value = sample()
+    value["schema_version"] = 2
+    value["cpu"]["clock_mhz"] = 4700
+    value["memory"].update({
+        "used_bytes": 24,
+        "total_bytes": 32,
+        "swap_used_bytes": 2,
+        "swap_total_bytes": 8,
+        "swap_usage_percent": 25,
+        "pressure_some_percent": None,
+    })
+    value["health"] = {"uptime_seconds": 86400, "undervoltage": None, "throttled": None}
+    value["storage"] = {
+        "name": "C:\\", "usage_percent": 60, "used_bytes": 60, "total_bytes": 100,
+        "read_bytes_per_second": 1, "write_bytes_per_second": 2, "temperature_c": None,
+    }
+    value["network"] = {
+        "interface": "Ethernet", "link_up": True,
+        "down_bytes_per_second": 3, "up_bytes_per_second": 4,
+    }
+    value["collector"]["version"] = "0.2.0"
+    return value
+
+
 class HubHttpTests(AioHTTPTestCase):
     async def get_application(self):
         token_hash = hashlib.sha256(TOKEN.encode()).hexdigest()
@@ -53,6 +78,11 @@ class HubHttpTests(AioHTTPTestCase):
         self.assertEqual(403, response.status)
         response = await self.client.post("/api/v1/telemetry", json=sample())
         self.assertEqual(401, response.status)
+
+    async def test_v2_uses_existing_ingest_endpoint(self) -> None:
+        response = await self.post(sample_v2())
+        self.assertEqual(200, response.status)
+        self.assertEqual(2, self.state.current()["nodes"][0]["schema_version"])
 
     async def test_token_cannot_write_another_node(self) -> None:
         body = sample("other")

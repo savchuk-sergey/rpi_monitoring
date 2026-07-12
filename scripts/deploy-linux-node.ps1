@@ -101,9 +101,18 @@ try {
     & ssh @ssh $agentTarget "$install && ${agentElevate}systemctl --quiet is-active homelab-resource-monitor-linux-agent.service || { $diagnostics; exit 1; }"
     if ($LASTEXITCODE -ne 0) { throw 'Linux agent installation failed.' }
 
-    $verify = 'for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:8766/api/v1/state | python3 -c ''import json,sys; raise SystemExit(0 if any(n["node_id"] == sys.argv[1] for n in json.load(sys.stdin)["nodes"]) else 1)'' {0} && exit 0; sleep 1; done; exit 1' -f $NodeId
-    & ssh @ssh $hubTarget $verify
-    if ($LASTEXITCODE -ne 0) { throw "Node '$NodeId' did not appear in hub state." }
+    $appeared = $false
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $rawState = & ssh @ssh $hubTarget 'curl -fsS http://127.0.0.1:8766/api/v1/state'
+        if ($LASTEXITCODE -eq 0) {
+            try {
+                $state = $rawState | ConvertFrom-Json -ErrorAction Stop
+                if ($state.nodes.node_id -contains $NodeId) { $appeared = $true; break }
+            } catch {}
+        }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $appeared) { throw "Node '$NodeId' did not appear in hub state." }
     Write-Output "Deployed Linux agent '$NodeId' to $agentTarget"
 } finally {
     if ((Get-Location).Path -eq $repo) { Pop-Location }

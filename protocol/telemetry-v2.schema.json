@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homelab.invalid/schemas/telemetry-v2.schema.json",
+  "title": "Homelab resource telemetry v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "node_id", "display_name", "timestamp_utc",
+    "os", "cpu", "memory", "gpu", "storage", "network", "health", "collector"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "node_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "timestamp_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "os": { "$ref": "#/$defs/os" },
+    "cpu": { "$ref": "#/$defs/processor" },
+    "memory": { "$ref": "#/$defs/memory" },
+    "device": { "$ref": "#/$defs/device" },
+    "gpu": { "type": "array", "items": { "$ref": "#/$defs/gpu" } },
+    "storage": { "$ref": "#/$defs/storage" },
+    "network": { "$ref": "#/$defs/network" },
+    "health": { "$ref": "#/$defs/health" },
+    "collector": { "$ref": "#/$defs/collector" }
+  },
+  "$defs": {
+    "percentage": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+    "measurement": { "type": ["number", "null"] },
+    "nonNegativeMeasurement": { "type": ["number", "null"], "minimum": 0 },
+    "bytes": { "type": ["integer", "null"], "minimum": 0 },
+    "nullableBoolean": { "type": ["boolean", "null"] },
+    "os": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "version"],
+      "properties": {
+        "family": { "enum": ["linux", "windows"] },
+        "version": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "processor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usage_percent", "temperature_c", "power_w", "clock_mhz"],
+      "properties": {
+        "usage_percent": { "$ref": "#/$defs/percentage" },
+        "temperature_c": { "$ref": "#/$defs/measurement" },
+        "power_w": { "$ref": "#/$defs/measurement" },
+        "clock_mhz": { "$ref": "#/$defs/nonNegativeMeasurement" }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "usage_percent", "used_bytes", "total_bytes", "swap_used_bytes",
+        "swap_total_bytes", "swap_usage_percent", "pressure_some_percent"
+      ],
+      "properties": {
+        "usage_percent": { "$ref": "#/$defs/percentage" },
+        "used_bytes": { "$ref": "#/$defs/bytes" },
+        "total_bytes": { "$ref": "#/$defs/bytes" },
+        "swap_used_bytes": { "$ref": "#/$defs/bytes" },
+        "swap_total_bytes": { "$ref": "#/$defs/bytes" },
+        "swap_usage_percent": { "$ref": "#/$defs/percentage" },
+        "pressure_some_percent": { "$ref": "#/$defs/percentage" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["power_w"],
+      "properties": { "power_w": { "$ref": "#/$defs/measurement" } }
+    },
+    "gpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "name", "usage_percent", "temperature_c", "power_w",
+        "memory_used_bytes", "memory_total_bytes", "memory_usage_percent",
+        "fan_percent", "clock_mhz"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "usage_percent": { "$ref": "#/$defs/percentage" },
+        "temperature_c": { "$ref": "#/$defs/measurement" },
+        "power_w": { "$ref": "#/$defs/measurement" },
+        "memory_used_bytes": { "$ref": "#/$defs/bytes" },
+        "memory_total_bytes": { "$ref": "#/$defs/bytes" },
+        "memory_usage_percent": { "$ref": "#/$defs/percentage" },
+        "fan_percent": { "$ref": "#/$defs/percentage" },
+        "clock_mhz": { "$ref": "#/$defs/nonNegativeMeasurement" }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "usage_percent", "used_bytes", "total_bytes",
+        "read_bytes_per_second", "write_bytes_per_second", "temperature_c"
+      ],
+      "properties": {
+        "name": { "type": ["string", "null"], "maxLength": 128 },
+        "usage_percent": { "$ref": "#/$defs/percentage" },
+        "used_bytes": { "$ref": "#/$defs/bytes" },
+        "total_bytes": { "$ref": "#/$defs/bytes" },
+        "read_bytes_per_second": { "$ref": "#/$defs/nonNegativeMeasurement" },
+        "write_bytes_per_second": { "$ref": "#/$defs/nonNegativeMeasurement" },
+        "temperature_c": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interface", "link_up", "down_bytes_per_second", "up_bytes_per_second"],
+      "properties": {
+        "interface": { "type": ["string", "null"], "maxLength": 128 },
+        "link_up": { "$ref": "#/$defs/nullableBoolean" },
+        "down_bytes_per_second": { "$ref": "#/$defs/nonNegativeMeasurement" },
+        "up_bytes_per_second": { "$ref": "#/$defs/nonNegativeMeasurement" }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uptime_seconds", "undervoltage", "throttled"],
+      "properties": {
+        "uptime_seconds": { "type": ["integer", "null"], "minimum": 0 },
+        "undervoltage": { "$ref": "#/$defs/nullableBoolean" },
+        "throttled": { "$ref": "#/$defs/nullableBoolean" }
+      }
+    },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "errors"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 256 },
+          "maxItems": 32
+        }
+      }
+    }
+  }
+}

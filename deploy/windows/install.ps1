@@ -22,9 +22,15 @@ if (-not (Get-CimInstance Win32_SystemDriver -Filter "Name='PawnIO'" -ErrorActio
     throw 'PawnIO is required for Windows CPU temperature/power sensors. Install signed package namazso.PawnIO first.'
 }
 
+$serviceProcess = Get-CimInstance Win32_Service -Filter "Name='$service'" -ErrorAction SilentlyContinue |
+    Where-Object ProcessId -gt 0 |
+    ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
 sc.exe stop $service 2>$null | Out-Null
 if (Get-Service -Name $service -ErrorAction SilentlyContinue) {
     (Get-Service -Name $service).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+}
+if ($serviceProcess -and -not $serviceProcess.WaitForExit(20000)) {
+    throw 'Windows agent process did not exit after the service stopped.'
 }
 New-Item -ItemType Directory -Force -Path $install, $configDirectory | Out-Null
 Copy-Item -Path (Join-Path $ArtifactDirectory '*') -Destination $install -Recurse -Force
@@ -50,5 +56,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot create or update Windows Service.' }
 sc.exe failure $service reset= 86400 actions= restart/5000/restart/15000/none/0 | Out-Null
 sc.exe start $service | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Windows Service was installed but did not start.' }
+(Get-Service -Name $service).WaitForStatus('Running', [TimeSpan]::FromSeconds(20))
 Remove-Item -LiteralPath $errorLog -Force -ErrorAction SilentlyContinue
 Write-Output "Installed and started $service"

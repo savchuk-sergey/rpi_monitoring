@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.ComponentModel;
+using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using LibreHardwareMonitor.Hardware;
 
 namespace HomelabResourceMonitor.WindowsAgent;
@@ -10,8 +12,10 @@ public sealed class HardwareCollector : IDisposable
     {
         IsCpuEnabled = true,
         IsGpuEnabled = true,
-        IsMemoryEnabled = true
+        IsMemoryEnabled = true,
+        IsStorageEnabled = true
     };
+    private (string Id, long Received, long Sent, long Timestamp)? _previousNetwork;
 
     public HardwareCollector() => _computer.Open();
 
@@ -30,7 +34,16 @@ public sealed class HardwareCollector : IDisposable
             readings = [];
         }
 
-        var (cpu, memory, gpu) = SensorMapper.Map(readings);
+        var (cpu, memory, gpu, storageSensors) = SensorMapper.Map(readings);
+        try
+        {
+            var (total, available) = ReadPhysicalMemory();
+            memory = ApplyPhysicalMemory(memory, total, available);
+        }
+        catch (Exception error)
+        {
+            errors.Add($"physical memory: {error.GetType().Name}");
+        }
         try
         {
             gpu = MergeGpu(gpu, ParseNvidia(RunNvidiaSmi()));
@@ -39,9 +52,29 @@ public sealed class HardwareCollector : IDisposable
         {
             errors.Add($"nvidia-smi: {error.GetType().Name}");
         }
+        StorageMetrics storage;
+        try
+        {
+            storage = SystemStorage(storageSensors);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            errors.Add($"storage: {error.GetType().Name}");
+            storage = new(null, null, null, null, null, null, null);
+        }
+        NetworkMetrics network;
+        try
+        {
+            network = Network();
+        }
+        catch (NetworkInformationException error)
+        {
+            errors.Add($"network: {error.GetType().Name}");
+            network = new(null, null, null, null);
+        }
 
         return new TelemetrySample(
-            1,
+            2,
             config.NodeId,
             config.DisplayName,
             DateTime.UtcNow,
@@ -49,7 +82,10 @@ public sealed class HardwareCollector : IDisposable
             cpu,
             memory,
             gpu,
-            new CollectorMetrics("0.1.0", errors));
+            storage,
+            network,
+            new HealthMetrics(Math.Max(0, Environment.TickCount64 / 1000), null, null),
+            new CollectorMetrics("0.2.0", errors));
     }
 
     public void Dispose() => _computer.Close();
@@ -62,10 +98,23 @@ public sealed class HardwareCollector : IDisposable
             .Select((line, index) =>
             {
                 var fields = line.Trim().Split(',').Select(value => value.Trim()).ToArray();
-                if (fields.Length != 4)
+                if (fields.Length != 8)
                     throw new FormatException("malformed nvidia-smi output");
+                var memoryUsedMib = Number(fields[4]);
+                var memoryTotalMib = Number(fields[5]);
                 return new GpuMetrics(
-                    index.ToString(), fields[0], Number(fields[1]), Number(fields[2]), Number(fields[3]));
+                    index.ToString(),
+                    fields[0],
+                    Number(fields[1]),
+                    Number(fields[2]),
+                    Number(fields[3]),
+                    Mib(memoryUsedMib),
+                    Mib(memoryTotalMib),
+                    memoryUsedMib is not null && memoryTotalMib > 0
+                        ? Math.Round(100 * memoryUsedMib.Value / memoryTotalMib.Value, 1)
+                        : null,
+                    Number(fields[6]),
+                    Number(fields[7]));
             })
             .ToList();
     }
@@ -96,7 +145,12 @@ public sealed class HardwareCollector : IDisposable
             {
                 UsagePercent = gpu.UsagePercent ?? other.UsagePercent,
                 TemperatureC = gpu.TemperatureC ?? other.TemperatureC,
-                PowerW = gpu.PowerW ?? other.PowerW
+                PowerW = gpu.PowerW ?? other.PowerW,
+                MemoryUsedBytes = other.MemoryUsedBytes ?? gpu.MemoryUsedBytes,
+                MemoryTotalBytes = other.MemoryTotalBytes ?? gpu.MemoryTotalBytes,
+                MemoryUsagePercent = other.MemoryUsagePercent ?? gpu.MemoryUsagePercent,
+                FanPercent = other.FanPercent ?? gpu.FanPercent,
+                ClockMhz = other.ClockMhz ?? gpu.ClockMhz
             };
         }).ToList();
 
@@ -108,7 +162,7 @@ public sealed class HardwareCollector : IDisposable
             process = Process.Start(new ProcessStartInfo
             {
                 FileName = "nvidia-smi.exe",
-                Arguments = "--query-gpu=name,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader,nounits",
+                Arguments = "--query-gpu=name,utilization.gpu,temperature.gpu,power.draw,memory.used,memory.total,fan.speed,clocks.gr --format=csv,noheader,nounits",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 CreateNoWindow = true
@@ -133,6 +187,86 @@ public sealed class HardwareCollector : IDisposable
 
     private static double? Number(string value) =>
         value is "N/A" or "[Not Supported]" ? null : double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+
+    private static long? Mib(double? value) =>
+        value is null ? null : (long)Math.Round(value.Value * 1024 * 1024);
+
+    public static MemoryMetrics ApplyPhysicalMemory(MemoryMetrics memory, long total, long available)
+    {
+        var used = Math.Max(0, total - available);
+        return memory with
+        {
+            UsagePercent = total > 0 ? Math.Round(100d * used / total, 1) : null,
+            UsedBytes = used,
+            TotalBytes = total
+        };
+    }
+
+    private static (long Total, long Available) ReadPhysicalMemory()
+    {
+        var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
+        if (!GlobalMemoryStatusEx(ref status))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return (checked((long)status.TotalPhysical), checked((long)status.AvailablePhysical));
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx(ref MemoryStatus status);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryStatus
+    {
+        public uint Length;
+        public uint MemoryLoad;
+        public ulong TotalPhysical;
+        public ulong AvailablePhysical;
+        public ulong TotalPageFile;
+        public ulong AvailablePageFile;
+        public ulong TotalVirtual;
+        public ulong AvailableVirtual;
+        public ulong AvailableExtendedVirtual;
+    }
+
+    private static StorageMetrics SystemStorage(StorageMetrics sensors)
+    {
+        var drive = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!);
+        var used = drive.TotalSize - drive.TotalFreeSpace;
+        return sensors with
+        {
+            Name = drive.Name,
+            UsagePercent = drive.TotalSize > 0 ? Math.Round(100d * used / drive.TotalSize, 1) : null,
+            UsedBytes = used,
+            TotalBytes = drive.TotalSize
+        };
+    }
+
+    private NetworkMetrics Network()
+    {
+        var active = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(value => value.OperationalStatus == OperationalStatus.Up
+                && value.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+            .ToList();
+        var selected = active
+            .Where(value => value.GetIPProperties().GatewayAddresses.Count > 0)
+            .OrderByDescending(value => value.Speed)
+            .FirstOrDefault()
+            ?? active.OrderByDescending(value => value.Speed).FirstOrDefault();
+        if (selected is null)
+            return new(null, null, null, null);
+        var stats = selected.GetIPv4Statistics();
+        var now = Stopwatch.GetTimestamp();
+        var previous = _previousNetwork;
+        _previousNetwork = (selected.Id, stats.BytesReceived, stats.BytesSent, now);
+        double? down = null, up = null;
+        if (previous is { } value && value.Id == selected.Id && now > value.Timestamp)
+        {
+            var elapsed = (now - value.Timestamp) / (double)Stopwatch.Frequency;
+            down = Math.Max(0, (stats.BytesReceived - value.Received) / elapsed);
+            up = Math.Max(0, (stats.BytesSent - value.Sent) / elapsed);
+        }
+        return new(selected.Name, true, down, up);
+    }
 }
 
 internal sealed class UpdateVisitor : IVisitor
