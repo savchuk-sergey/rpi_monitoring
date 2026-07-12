@@ -34,13 +34,17 @@ PY
     rm -f /tmp/hub.json /tmp/linux-agent.json
 fi
 install -o homelab-monitor-display -g homelab-monitor-display -m 0600 "$calibration" /etc/homelab-resource-monitor/touch-calibration.json
-printf '%s\n' '{"state_url":"http://127.0.0.1:8766/api/v1/state","calibration_file":"/etc/homelab-resource-monitor/touch-calibration.json","lcd_speed_hz":16000000,"touch_speed_hz":2000000}' >/tmp/display.json
+printf '%s\n' '{"state_url":"http://127.0.0.1:8766/api/v1/state","calibration_file":"/etc/homelab-resource-monitor/touch-calibration.json","lcd_speed_hz":16000000,"touch_speed_hz":2000000,"auto_rotate_seconds":0,"pause_after_touch_seconds":30}' >/tmp/display.json
 install -o homelab-monitor-display -g homelab-monitor-display -m 0600 /tmp/display.json /etc/homelab-resource-monitor/display.json
 rm -f /tmp/display.json
 
 for unit in hub display linux-agent; do
     install -o root -g root -m 0644 "$source_dir/deploy/systemd/homelab-resource-monitor-$unit.service" /etc/systemd/system/
 done
+install -d -o root -g root -m 0755 /etc/systemd/system/homelab-resource-monitor-linux-agent.service.d
+printf '%s\n' '[Service]' 'Environment=PYTHONPATH=/opt/homelab-resource-monitor' 'ExecStart=' 'ExecStart=/opt/homelab-resource-monitor/.venv/bin/python -m agents.linux.agent --config /etc/homelab-resource-monitor/linux-agent.json' 'WorkingDirectory=/opt/homelab-resource-monitor' >/tmp/linux-agent-override.conf
+install -o root -g root -m 0644 /tmp/linux-agent-override.conf /etc/systemd/system/homelab-resource-monitor-linux-agent.service.d/override.conf
+rm -f /tmp/linux-agent-override.conf
 systemctl daemon-reload
 systemctl enable homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service
 systemctl restart homelab-resource-monitor-hub.service
