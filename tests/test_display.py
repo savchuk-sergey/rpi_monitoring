@@ -79,6 +79,7 @@ def waiting_node():
 
 RENDER_HASHES = {
     "graph": "66b0364742250623eb4d2522b1ac07a168c503658b16c1f00c84e92b565311ff",
+    "graph_with_history": "b497c0beaddc5a3b04d785699cce705e5d7ea89862109cc5d7085eda29d48b8b",
     "main_menu_capabilities": "21b52b19516410dfed6b3946cbf9cc518fcf17d09c454d7728bcf237ea3db399",
     "main_menu_legacy": "a73cbc7872ebc0b018673c4409c0b0d5d2281cb7c16fc684c1f637246d9bd19b",
     "overview_legacy": "7a64eb574d9d969407dec89fbf7ab8493a748dadec645124825d6e9cef15c9d4",
@@ -141,21 +142,47 @@ class DisplayTests(unittest.TestCase):
                 "reason": "sensor_not_found",
             },
         }
+        history = HistoryStore(window_seconds=300, max_samples=180)
+        history.add(
+            node(
+                timestamp_utc="2026-07-12T03:00:00Z",
+                cpu={"usage_percent": 20, "temperature_c": 63, "power_w": None},
+            )
+        )
+        history.add(node(timestamp_utc="2026-07-12T03:00:01Z", online=False))
+        graph_node = node(
+            timestamp_utc="2026-07-12T03:00:02Z",
+            cpu={"usage_percent": 80, "temperature_c": 63, "power_w": None},
+        )
+        history.add(graph_node)
         scenarios = {
-            "overview_legacy": (node(), UiState()),
-            "overview_waiting": (waiting_node(), UiState()),
-            "main_menu_legacy": (node(), UiState(screen=Screen.MAIN_MENU)),
+            "overview_legacy": (node(), UiState(), None),
+            "overview_waiting": (waiting_node(), UiState(), None),
+            "main_menu_legacy": (node(), UiState(screen=Screen.MAIN_MENU), None),
             "main_menu_capabilities": (
                 node(capabilities=capabilities),
                 UiState(screen=Screen.MAIN_MENU),
+                None,
             ),
-            "values": (node(), UiState(screen=Screen.VALUES)),
-            "graph": (node(), UiState(screen=Screen.GRAPH)),
+            "values": (node(), UiState(screen=Screen.VALUES), None),
+            "graph": (node(), UiState(screen=Screen.GRAPH), None),
+            "graph_with_history": (
+                graph_node,
+                UiState(screen=Screen.GRAPH),
+                history,
+            ),
         }
-        for name, (value, state) in scenarios.items():
+        for name, (value, state, history_store) in scenarios.items():
             with self.subTest(name=name):
                 digest = hashlib.sha256(
-                    render(value, (1, 4), True, state, now=now).tobytes()
+                    render(
+                        value,
+                        (1, 4),
+                        True,
+                        state,
+                        history=history_store,
+                        now=now,
+                    ).tobytes()
                 ).hexdigest()
                 self.assertEqual(RENDER_HASHES[name], digest)
 

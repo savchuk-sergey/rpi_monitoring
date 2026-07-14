@@ -124,6 +124,30 @@ _ACTIVE_SCREENS = {
 }
 
 
+def _select_node(
+    state: UiState,
+    nodes: tuple[dict[str, Any], ...],
+    index: int,
+    now: float,
+) -> UiState:
+    next_state = replace(
+        state,
+        metric_by_category=dict(state.metric_by_category),
+        selected_node_id=nodes[index].get("node_id"),
+        node_index_hint=index,
+        selected_gpu_index=0,
+        last_rotation_at=now,
+    )
+    if state.screen in {Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH}:
+        node = nodes[index]
+        category_id = next_state.category_id(node)
+        next_state.selected_category_id = category_id
+        metric_id = next_state.metric_id(node)
+        if metric_id:
+            next_state.metric_by_category[category_id] = metric_id
+    return next_state
+
+
 def reduce_ui(
     state: UiState,
     event: UiEvent,
@@ -175,10 +199,7 @@ def reduce_ui(
                     state.node_index_hint,
                 )
                 index = move(index, len(context.nodes), -1 if action == "previous" else 1)
-                next_state.selected_node_id = context.nodes[index].get("node_id")
-                next_state.node_index_hint = index
-                next_state.selected_gpu_index = 0
-                next_state.last_rotation_at = event.now
+                next_state = _select_node(next_state, context.nodes, index, event.now)
                 return UiTransition(
                     next_state,
                     changed=True,
@@ -301,9 +322,6 @@ def reduce_ui(
             state.node_index_hint,
         )
         index = move(index, len(context.nodes), 1)
-        next_state.selected_node_id = context.nodes[index].get("node_id")
-        next_state.node_index_hint = index
-        next_state.selected_gpu_index = 0
-        next_state.last_rotation_at = event.now
+        next_state = _select_node(next_state, context.nodes, index, event.now)
         return UiTransition(next_state, changed=True, full_refresh=True)
     return UiTransition(next_state)

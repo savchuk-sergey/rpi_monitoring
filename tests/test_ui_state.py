@@ -289,6 +289,52 @@ class UiStateTests(unittest.TestCase):
         self.assertFalse(single.changed)
         self.assertEqual(2, single.state.selected_gpu_index)
 
+    def test_node_switch_normalizes_detail_selection_before_refresh(self) -> None:
+        gpu_node = node("gpu", gpu=[{"usage_percent": 50}])
+        targets = {
+            "legacy": node("legacy"),
+            "capability_unsupported": node(
+                "unsupported",
+                gpu=[{"usage_percent": 50}],
+                capabilities={
+                    "gpu.usage_percent": {
+                        "supported": False,
+                        "source": None,
+                        "reason": "sensor_not_found",
+                    }
+                },
+            ),
+        }
+        events = {
+            "next": ShortPress(300, 210, 10),
+            "auto_rotation": AutoRotateTick(10, True),
+        }
+        for target_name, target in targets.items():
+            nodes = (gpu_node, target)
+            for screen in (Screen.VALUES, Screen.GRAPH, Screen.MAIN_MENU):
+                for event_name, event in events.items():
+                    with self.subTest(
+                        target=target_name,
+                        screen=screen,
+                        event=event_name,
+                    ):
+                        state = UiState(
+                            screen=screen,
+                            selected_node_id="gpu",
+                            selected_category_id="gpu",
+                            metric_by_category={"gpu": "load"},
+                        )
+                        selected = reduce_ui(state, event, context(nodes, rotate=10))
+                        refreshed = reduce_ui(
+                            selected.state,
+                            DataRefreshed(nodes, True, 11),
+                            context(nodes),
+                        )
+                        self.assertEqual(target["node_id"], refreshed.state.selected_node_id)
+                        self.assertEqual(screen, refreshed.state.screen)
+                        self.assertEqual("cpu", refreshed.state.selected_category_id)
+                        self.assertEqual("load", refreshed.state.metric_by_category["cpu"])
+
     def test_gesture_timing_and_short_center_transitions(self) -> None:
         value = node()
         opened = reduce_ui(
