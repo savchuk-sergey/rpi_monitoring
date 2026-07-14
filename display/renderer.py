@@ -32,6 +32,9 @@ from display.navigation import (
     NODES_NEXT_PAGE_HITBOX,
     NODES_PREVIOUS_PAGE_HITBOX,
     NODES_ROW_RECTS,
+    SYSTEM_BACK_HITBOX,
+    SYSTEM_RESTART_CARD_RECT,
+    SYSTEM_SHUTDOWN_CARD_RECT,
     VALUES_GRAPH_BUTTON_RECT,
     normalize_menu_page,
     normalize_nodes_page,
@@ -72,8 +75,13 @@ def render(
     pressed_action: str | None = None,
     now: datetime | None = None,
     nodes: tuple[dict[str, Any], ...] | None = None,
+    local_target_name: str = "LOCAL DISPLAY",
 ) -> Image.Image:
     state = ui_state or UiState()
+    target_name = str(
+        local_target_name
+        or "LOCAL DISPLAY"
+    ).strip() or "LOCAL DISPLAY"
     snapshot = (
         tuple(nodes)
         if nodes is not None
@@ -89,6 +97,10 @@ def render(
         "title": _font(22),
         "value": _font(38),
     }
+    if state.screen == Screen.SYSTEM:
+        _system(draw, fonts, target_name)
+        _system_footer(draw, fonts, pressed_action)
+        return image
     if state.screen == Screen.NODES:
         if snapshot:
             _nodes(
@@ -404,9 +416,9 @@ def _menu(
             icon = _draw_nodes_menu_icon
         elif category_id == "system":
             title = "SYSTEM"
-            color = MUTED
-            subtitle = "LATER"
-            available = False
+            color = GREEN
+            subtitle = "LOCAL"
+            available = True
             icon = _draw_system_menu_icon
         else:
             item = category(category_id)
@@ -627,6 +639,86 @@ def _draw_system_menu_icon(
         width=2,
     )
     draw.line((left + 16, top + 22, right - 7, top + 22), fill=fill, width=2)
+
+
+def _system(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    local_target_name: str,
+) -> None:
+    draw.text((10, 16), "SYSTEM", font=fonts["detail"], fill=GREEN, anchor="lm")
+    draw.text(
+        (310, 16),
+        _fit(draw, local_target_name.upper(), fonts["small"], 190),
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="rm",
+    )
+    draw.rectangle(SYSTEM_RESTART_CARD_RECT, outline=AMBER, width=2)
+    _draw_restart_icon(draw, (20, 48, 48, 76), AMBER)
+    draw.text((58, 56), "RESTART", font=fonts["label"], fill=AMBER, anchor="lm")
+    draw.text(
+        (58, 82),
+        "LOCKED: CONFIRMATION REQUIRED",
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="lm",
+    )
+    draw.rectangle(SYSTEM_SHUTDOWN_CARD_RECT, outline=RED, width=2)
+    _draw_shutdown_icon(draw, (20, 128, 48, 156), RED)
+    draw.text((58, 136), "SHUTDOWN", font=fonts["label"], fill=RED, anchor="lm")
+    draw.text(
+        (58, 162),
+        "LOCKED: CONFIRMATION REQUIRED",
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="lm",
+    )
+
+
+def _draw_restart_icon(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fill: str,
+) -> None:
+    left, top, right, bottom = box
+    draw.arc((left + 2, top + 2, right - 2, bottom - 2), 35, 330, fill=fill, width=2)
+    draw.polygon(((right - 7, top + 1), (right, top + 2), (right - 3, top + 9)), fill=fill)
+
+
+def _draw_shutdown_icon(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fill: str,
+) -> None:
+    left, top, right, bottom = box
+    draw.ellipse((left + 2, top + 2, right - 2, bottom - 2), outline=fill, width=2)
+    center_x = (left + right) // 2
+    draw.line((center_x, top - 1, center_x, top + 13), fill=fill, width=3)
+
+
+def _system_footer(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    pressed_action: str | None,
+) -> None:
+    draw.line((0, 192, 319, 192), fill=MUTED)
+    box = (
+        SYSTEM_BACK_HITBOX[0],
+        SYSTEM_BACK_HITBOX[1],
+        SYSTEM_BACK_HITBOX[2] - 1,
+        SYSTEM_BACK_HITBOX[3] - 1,
+    )
+    pressed = pressed_action == "system_back"
+    if pressed:
+        draw.rectangle(box, fill=MUTED)
+    draw.text(
+        (159, 216),
+        "BACK",
+        font=fonts["small"],
+        fill=BACKGROUND if pressed else GREEN,
+        anchor="mm",
+    )
 
 
 def _chart(

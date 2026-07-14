@@ -31,6 +31,10 @@ LOG = logging.getLogger("homelab-resource-monitor-display")
 
 
 async def run(config: dict) -> None:
+    local_target_name = str(
+        config.get("local_node_id")
+        or "LOCAL DISPLAY"
+    ).strip() or "LOCAL DISPLAY"
     calibration = json.loads(Path(config["calibration_file"]).read_text())
     lcd = ILI9341(int(config.get("lcd_speed_hz", 4_000_000)))
     touch = XPT2046(int(config.get("touch_speed_hz", 2_000_000)))
@@ -197,6 +201,7 @@ async def run(config: dict) -> None:
                         state.selected_gpu_index,
                         state.menu_page,
                         state.nodes_page,
+                        local_target_name,
                         pressed_action,
                         int(now),
                     ),
@@ -218,6 +223,7 @@ async def run(config: dict) -> None:
                         history,
                         pressed_action,
                         nodes=tuple(nodes),
+                        local_target_name=local_target_name,
                     )
                     render_ms = (loop.time() - render_started) * 1000
                     box = ImageChops.difference(last_frame, frame).getbbox()

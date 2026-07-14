@@ -75,6 +75,36 @@ NODES_NEXT_PAGE_HITBOX: Rect = (
     320,
     240,
 )
+SYSTEM_RESTART_AREA: Rect = (
+    0,
+    32,
+    320,
+    104,
+)
+SYSTEM_SHUTDOWN_AREA: Rect = (
+    0,
+    112,
+    320,
+    184,
+)
+SYSTEM_BACK_HITBOX: Rect = (
+    64,
+    192,
+    256,
+    240,
+)
+SYSTEM_RESTART_CARD_RECT: Rect = (
+    8,
+    36,
+    312,
+    100,
+)
+SYSTEM_SHUTDOWN_CARD_RECT: Rect = (
+    8,
+    116,
+    312,
+    180,
+)
 
 
 def move(index: int, count: int, delta: int) -> int:
@@ -213,6 +243,11 @@ def nodes_action_at(
         if left <= x < right and top <= y < bottom:
             return f"nodes_select_{index}" if index < visible_count else None
     return None
+
+
+def system_action_at(x: int, y: int) -> str | None:
+    left, top, right, bottom = SYSTEM_BACK_HITBOX
+    return "system_back" if left <= x < right and top <= y < bottom else None
 
 
 def map_touch(raw_x: int, raw_y: int, calibration: dict[str, Any]) -> tuple[int, int]:

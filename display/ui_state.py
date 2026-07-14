@@ -17,6 +17,7 @@ from display.navigation import (
     normalize_nodes_page,
     ordered_nodes,
     selected_index,
+    system_action_at,
     touch_action,
     values_action_at,
 )
@@ -164,7 +165,9 @@ def visible_action_at(
             return action
         if action == "menu_tile_nodes":
             return action if snapshot else None
-        if action is None or action == "menu_tile_system":
+        if action == "menu_tile_system":
+            return action
+        if action is None:
             return None
         category_id = action.removeprefix("menu_tile_")
         selected = category(category_id)
@@ -176,6 +179,8 @@ def visible_action_at(
             x,
             y,
         )
+    if state.screen == Screen.SYSTEM:
+        return system_action_at(x, y)
     footer_action = touch_action(x, y)
     if footer_action is not None:
         return footer_action
@@ -380,6 +385,26 @@ def reduce_ui(
                 )
             return UiTransition(next_state)
 
+        if state.screen == Screen.SYSTEM and action == "system_back":
+            next_state.screen = Screen.MAIN_MENU
+            next_state.menu_page = 1
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action="system_back",
+            )
+
+        if state.screen == Screen.SYSTEM and action in {
+            "system_restart",
+            "system_shutdown",
+            "restart",
+            "shutdown",
+            "reboot",
+            "poweroff",
+        }:
+            return UiTransition(next_state)
+
         if state.screen == Screen.NODES and action in {
             "nodes_previous_page",
             "nodes_next_page",
@@ -499,7 +524,13 @@ def reduce_ui(
             )
 
         if state.screen == Screen.MAIN_MENU and action == "menu_tile_system":
-            return UiTransition(next_state)
+            next_state.screen = Screen.SYSTEM
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action="open_system",
+            )
 
         if state.screen == Screen.MAIN_MENU and action is not None and action.startswith("menu_tile_"):
             if node is None:
@@ -619,7 +650,7 @@ def reduce_ui(
     if isinstance(event, InactivityTick):
         if event.touch_pressed:
             return UiTransition(next_state)
-        if state.screen in {Screen.MAIN_MENU, Screen.NODES}:
+        if state.screen in {Screen.MAIN_MENU, Screen.NODES, Screen.SYSTEM}:
             timeout = context.menu_timeout_seconds
         elif state.screen in {Screen.VALUES, Screen.GRAPH}:
             timeout = context.detail_timeout_seconds

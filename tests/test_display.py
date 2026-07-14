@@ -31,6 +31,11 @@ from display.navigation import (
     NODES_PREVIOUS_PAGE_HITBOX,
     NODES_ROW_RECTS,
     PREVIOUS_HITBOX,
+    SYSTEM_BACK_HITBOX,
+    SYSTEM_RESTART_AREA,
+    SYSTEM_RESTART_CARD_RECT,
+    SYSTEM_SHUTDOWN_AREA,
+    SYSTEM_SHUTDOWN_CARD_RECT,
     VALUES_GRAPH_BUTTON_RECT,
     VALUES_GRAPH_HITBOX,
     graph_action_at,
@@ -46,6 +51,7 @@ from display.navigation import (
     normalize_nodes_page,
     ordered_nodes,
     selected_index,
+    system_action_at,
     touch_action,
     values_action_at,
 )
@@ -148,15 +154,25 @@ MENU_RENDER_HASHES = {
     "menu_page_1_next_pressed": "8cf98b2076b6e0a5136c2dd169bb064217102a7e5f23fd744db020e3e7ff1475",
     "menu_page_1_nodes_pressed": "d4e2b8c0dcf33974026841a75cd9c941980874bc7eaab8c3450e0b5219db2d1d",
     "menu_page_1_previous_pressed": "4a8a962442e625b33d1988b7f8733e37ef120769319b25a8ed524e9656bca3bc",
-    "menu_page_2_back_pressed": "9a49fe8ad02cdd4c3e3e073b924f954d4dc337488318153ddf30566bb1d0c1a8",
-    "menu_page_2_capabilities": "504b99df8e1f07a67a43da4b6d9f0fe62cf4895ee56a75260e48ff69c242a2d9",
-    "menu_page_2_health_errors": "2bc449356552e31e749105ba9ac67623ef36c2b6ba83adca199680e11a8604a4",
-    "menu_page_2_health_pressed": "df811d7d7e89f7693b9c8ba0f3230a42ca1b13d1d3ab2fecc00af84b96759463",
-    "menu_page_2_legacy": "82f7aa8af7d5c5a45ec9bc68c8e7a8aeac77046ed2f5f33627b11631825fec52",
-    "menu_page_2_network_pressed": "fc22aac812d0179e15b02188e07f31fa8a051125bd585cf9e892a5e61e8e3747",
-    "menu_page_2_next_pressed": "ecb162a7b7fbe6ab25ea79a0ab7e5aa1b927477d0a4565616da6e275974eb4ee",
-    "menu_page_2_previous_pressed": "86ee197af6c2382cb6912658f7ce90f0a12c8793b5fcaca1b2c03dd1c5a04dca",
-    "menu_page_2_storage_pressed": "7b349b308e035bb3c4d120caedc08d9a2620699636dc448b05a19ccb42b4e93c",
+    "menu_page_2_back_pressed": "aff2a6e5648b77b8517feb9048b7e2c2414dc7c195ab2df36dcd2669565c11c5",
+    "menu_page_2_capabilities": "f236468dee1b9b4f246927bcda78a69559f6de05303fe7a94a1e0e1a96268319",
+    "menu_page_2_health_errors": "122e8c9c6e1e85c01ae869177cdaac17a7c86728801853ba26738231a29489c5",
+    "menu_page_2_health_pressed": "8fed416290e6956589b21287751a715ee531ef3669618f9f35590eb1fe8df3ad",
+    "menu_page_2_legacy": "e78e8a85a26e5bda63e452a20227006289d64746dacb218b8323f82c417356d4",
+    "menu_page_2_network_pressed": "6fbd87c87d684b4dd8e3cb8bbbff656a11ad9dfe317ef3f32fc728fec54d1ce7",
+    "menu_page_2_next_pressed": "f2d0b041212ccadc5bb8f645783989b5921f66621beef33b9fcd6a968dcfbb55",
+    "menu_page_2_previous_pressed": "a0513acfdddc0c0dd24f7efce2271f4ea5b1484aabeb6b10de695373515a913a",
+    "menu_page_2_storage_pressed": "834dfa1dc4913f5384f9ba51ca9884f6cea88c02d9865727bb0b7df1be7ee447",
+    "menu_page_2_system_pressed": "283d45a6e38552e4bed267911d6521df792d6ee4bbe008fe59e7d3e257dc234e",
+}
+
+SYSTEM_RENDER_HASHES = {
+    "system_default_target": "37d06728600d79d2f8839e3a1a0d9913a3dd847ec89df60a9e9872f33b111db2",
+    "system_configured_target": "0a857cf4404128ae5f83d69a33fe8f4e1a83a56af074cd1603459a41b67d4675",
+    "system_long_target": "2dc47dab940cb77cef626530f566706ce7eb1465b1afe7b74afc0c732cb1bf20",
+    "system_no_nodes": "37d06728600d79d2f8839e3a1a0d9913a3dd847ec89df60a9e9872f33b111db2",
+    "system_hub_offline": "37d06728600d79d2f8839e3a1a0d9913a3dd847ec89df60a9e9872f33b111db2",
+    "system_back_pressed": "7b5edc79be977c7da3a7da565f3cb24e217e8857fdaa2cd9af261f0a6bb29d67",
 }
 
 OLD_GRAPH_HASHES = {
@@ -461,7 +477,7 @@ class DisplayTests(unittest.TestCase):
                 ("STORAGE", "READY", GREEN),
                 ("NETWORK", "NO DATA", MUTED),
                 ("HEALTH", "READY", GREEN),
-                ("SYSTEM", "LATER", MUTED),
+                ("SYSTEM", "LOCAL", GREEN),
             ),
         }
         original_text = ImageDraw.ImageDraw.text
@@ -519,7 +535,7 @@ class DisplayTests(unittest.TestCase):
                 self.assertIn(((226, 144, 232, 150), {"outline": GREEN, "width": 2}), rectangle_calls)
                 self.assertIn(((248, 144, 254, 150), {"outline": GREEN, "width": 2}), rectangle_calls)
             else:
-                self.assertIn(((226, 125, 254, 149), {"outline": MUTED, "width": 2}), rectangle_calls)
+                self.assertIn(((226, 125, 254, 149), {"outline": GREEN, "width": 2}), rectangle_calls)
 
         health_text = []
 
@@ -546,7 +562,7 @@ class DisplayTests(unittest.TestCase):
         value = complete_v2_node()
         for page, actions in {
             0: ("menu_tile_cpu", "menu_tile_memory", "menu_tile_gpu", "menu_tile_nodes"),
-            1: ("menu_tile_storage", "menu_tile_network", "menu_tile_health"),
+            1: ("menu_tile_storage", "menu_tile_network", "menu_tile_health", "menu_tile_system"),
         }.items():
             state = UiState(screen=Screen.MAIN_MENU, menu_page=page)
             normal = render(value, ui_state=state)
@@ -583,7 +599,6 @@ class DisplayTests(unittest.TestCase):
         for page, point, forbidden_action in (
             (0, (80, 152), "menu_tile_gpu"),
             (1, (80, 72), "menu_tile_storage"),
-            (1, (240, 152), "menu_tile_system"),
         ):
             state = UiState(screen=Screen.MAIN_MENU, menu_page=page)
             with self.subTest(page=page, point=point):
@@ -636,7 +651,7 @@ class DisplayTests(unittest.TestCase):
             scenarios[f"menu_page_1_{category_id}_pressed"] = (
                 full, UiState(screen=Screen.MAIN_MENU), f"menu_tile_{category_id}"
             )
-        for category_id in ("storage", "network", "health"):
+        for category_id in ("storage", "network", "health", "system"):
             scenarios[f"menu_page_2_{category_id}_pressed"] = (
                 full, UiState(screen=Screen.MAIN_MENU, menu_page=1), f"menu_tile_{category_id}"
             )
@@ -915,7 +930,6 @@ class DisplayTests(unittest.TestCase):
             ).size,
         )
         for screen in (
-            Screen.SYSTEM,
             Screen.POWER_CONFIRM,
             Screen.POWER_PENDING,
             Screen.POWER_ERROR,
@@ -1773,7 +1787,7 @@ class DisplayTests(unittest.TestCase):
             text for xy, text, _ in link_lost_text if xy[0] == 22
         ))
 
-    def test_phase_6_main_menu_nodes_count_activation_and_system_inactivity(self) -> None:
+    def test_phase_6_main_menu_nodes_count_and_phase_7_system_activation(self) -> None:
         values = phase_6_nodes()
         text_calls = []
         original_text = ImageDraw.ImageDraw.text
@@ -1829,16 +1843,22 @@ class DisplayTests(unittest.TestCase):
 
         system_state = UiState(screen=Screen.MAIN_MENU, menu_page=1)
         system = render(values[0], ui_state=system_state, nodes=values)
-        self.assertIsNone(visible_action_at(system_state, values[0], 240, 152, values))
         self.assertEqual(
-            system.tobytes(),
-            render(
-                values[0],
-                ui_state=system_state,
-                pressed_action="menu_tile_system",
-                nodes=values,
-            ).tobytes(),
+            "menu_tile_system",
+            visible_action_at(system_state, values[0], 240, 152, values),
         )
+        pressed_system = render(
+            values[0],
+            ui_state=system_state,
+            pressed_action="menu_tile_system",
+            nodes=values,
+        )
+        difference = ImageChops.difference(system, pressed_system).getbbox()
+        self.assertIsNotNone(difference)
+        self.assertGreaterEqual(difference[0], MENU_TILE_RECTS[3][0])
+        self.assertGreaterEqual(difference[1], MENU_TILE_RECTS[3][1])
+        self.assertLessEqual(difference[2], MENU_TILE_RECTS[3][2])
+        self.assertLessEqual(difference[3], MENU_TILE_RECTS[3][3])
 
     def test_phase_6_nodes_pressed_feedback_is_localized_and_actionable_only(self) -> None:
         values = phase_6_nodes()
@@ -1979,6 +1999,177 @@ class DisplayTests(unittest.TestCase):
             render(None, ui_state=UiState()).tobytes(),
             render(None, ui_state=state, nodes=()).tobytes(),
         )
+
+    def test_phase_7_system_geometry_and_action_boundaries_are_exact(self) -> None:
+        self.assertEqual((0, 32, 320, 104), SYSTEM_RESTART_AREA)
+        self.assertEqual((0, 112, 320, 184), SYSTEM_SHUTDOWN_AREA)
+        self.assertEqual((64, 192, 256, 240), SYSTEM_BACK_HITBOX)
+        self.assertEqual((8, 36, 312, 100), SYSTEM_RESTART_CARD_RECT)
+        self.assertEqual((8, 116, 312, 180), SYSTEM_SHUTDOWN_CARD_RECT)
+        self.assertEqual((72, 72), (
+            SYSTEM_RESTART_AREA[3] - SYSTEM_RESTART_AREA[1],
+            SYSTEM_SHUTDOWN_AREA[3] - SYSTEM_SHUTDOWN_AREA[1],
+        ))
+        self.assertEqual((64, 64), (
+            SYSTEM_RESTART_CARD_RECT[3] - SYSTEM_RESTART_CARD_RECT[1],
+            SYSTEM_SHUTDOWN_CARD_RECT[3] - SYSTEM_SHUTDOWN_CARD_RECT[1],
+        ))
+        self.assertEqual(8, SYSTEM_SHUTDOWN_AREA[1] - SYSTEM_RESTART_AREA[3])
+        self.assertEqual((192, 48), (
+            SYSTEM_BACK_HITBOX[2] - SYSTEM_BACK_HITBOX[0],
+            SYSTEM_BACK_HITBOX[3] - SYSTEM_BACK_HITBOX[1],
+        ))
+        for point in ((64, 192), (255, 239)):
+            self.assertEqual("system_back", system_action_at(*point))
+        for point in (
+            (63, 210), (256, 210), (0, 32), (319, 103),
+            (0, 112), (319, 183), (100, 191), (100, 240),
+            (-1, 210), (320, 210),
+        ):
+            self.assertIsNone(system_action_at(*point))
+
+    def test_phase_7_system_renderer_routing_identity_geometry_and_locking(self) -> None:
+        state = UiState(screen=Screen.SYSTEM)
+        for helper in (
+            "_empty_state", "_header", "_footer", "_menu", "_menu_footer",
+            "_nodes", "_nodes_footer", "_detail_header", "_values_detail", "_graph_footer",
+        ):
+            with self.subTest(helper=helper), patch(f"display.renderer.{helper}") as blocked:
+                render(None, hub_online=False, ui_state=state, nodes=())
+                blocked.assert_not_called()
+        with patch("display.renderer._system") as system, patch(
+            "display.renderer._system_footer"
+        ) as footer:
+            render(None, ui_state=state, local_target_name=" local pi ")
+        self.assertEqual("local pi", system.call_args.args[2])
+        footer.assert_called_once()
+
+        first = node(node_id="selected-a", display_name="REMOTE A")
+        second = node(node_id="selected-b", display_name="REMOTE B")
+        frames = (
+            render(first, ui_state=state, nodes=(first,), local_target_name="display-rpi"),
+            render(second, ui_state=state, nodes=(second,), local_target_name="display-rpi"),
+            render(None, ui_state=state, nodes=(), local_target_name="display-rpi"),
+            render(None, hub_online=False, ui_state=state, nodes=(), local_target_name="display-rpi"),
+        )
+        self.assertTrue(all(frame.tobytes() == frames[0].tobytes() for frame in frames[1:]))
+        default = render(None, ui_state=state)
+        self.assertEqual(default.tobytes(), render(None, ui_state=state, local_target_name="  ").tobytes())
+        changed = render(None, ui_state=state, local_target_name="display-rpi")
+        difference = ImageChops.difference(default, changed).getbbox()
+        self.assertIsNotNone(difference)
+        self.assertGreaterEqual(difference[0], 120)
+        self.assertLessEqual(difference[2], 320)
+        self.assertLessEqual(difference[3], 32)
+        self.assertEqual(
+            default.tobytes(),
+            render(None, ui_state=state, pressed_action="system_restart").tobytes(),
+        )
+        self.assertEqual(
+            default.tobytes(),
+            render(None, ui_state=state, pressed_action="system_shutdown").tobytes(),
+        )
+
+        text_calls = []
+        rectangle_calls = []
+        arc_calls = []
+        polygon_calls = []
+        ellipse_calls = []
+        line_calls = []
+        originals = {
+            name: getattr(ImageDraw.ImageDraw, name)
+            for name in ("text", "rectangle", "arc", "polygon", "ellipse", "line")
+        }
+
+        def record(name):
+            def recorder(draw, xy, *args, **kwargs):
+                calls = {
+                    "text": text_calls,
+                    "rectangle": rectangle_calls,
+                    "arc": arc_calls,
+                    "polygon": polygon_calls,
+                    "ellipse": ellipse_calls,
+                    "line": line_calls,
+                }[name]
+                calls.append((xy, args, kwargs))
+                return originals[name](draw, xy, *args, **kwargs)
+            return recorder
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record("text")), \
+                patch.object(ImageDraw.ImageDraw, "rectangle", new=record("rectangle")), \
+                patch.object(ImageDraw.ImageDraw, "arc", new=record("arc")), \
+                patch.object(ImageDraw.ImageDraw, "polygon", new=record("polygon")), \
+                patch.object(ImageDraw.ImageDraw, "ellipse", new=record("ellipse")), \
+                patch.object(ImageDraw.ImageDraw, "line", new=record("line")):
+            render(first, ui_state=state, local_target_name="display-rpi")
+        drawn_text = {(xy, args[0], kwargs.get("fill"), kwargs.get("anchor")) for xy, args, kwargs in text_calls}
+        self.assertIn(((10, 16), "SYSTEM", GREEN, "lm"), drawn_text)
+        self.assertIn(((58, 56), "RESTART", AMBER, "lm"), drawn_text)
+        self.assertIn(((58, 82), "LOCKED: CONFIRMATION REQUIRED", MUTED, "lm"), drawn_text)
+        self.assertIn(((58, 136), "SHUTDOWN", RED, "lm"), drawn_text)
+        self.assertIn(((58, 162), "LOCKED: CONFIRMATION REQUIRED", MUTED, "lm"), drawn_text)
+        self.assertNotIn("REMOTE A", {args[0] for _, args, _ in text_calls})
+        self.assertIn((SYSTEM_RESTART_CARD_RECT, (), {"outline": AMBER, "width": 2}), rectangle_calls)
+        self.assertIn((SYSTEM_SHUTDOWN_CARD_RECT, (), {"outline": RED, "width": 2}), rectangle_calls)
+        self.assertIn(((22, 50, 46, 74), (35, 330), {"fill": AMBER, "width": 2}), arc_calls)
+        self.assertIn((((41, 49), (48, 50), (45, 57)), (), {"fill": AMBER}), polygon_calls)
+        self.assertIn(((22, 130, 46, 154), (), {"outline": RED, "width": 2}), ellipse_calls)
+        self.assertIn(((34, 127, 34, 141), (), {"fill": RED, "width": 3}), line_calls)
+        self.assertIn(((0, 192, 319, 192), (), {"fill": MUTED}), line_calls)
+
+        pressed = render(None, ui_state=state, pressed_action="system_back")
+        difference = ImageChops.difference(default, pressed).getbbox()
+        self.assertIsNotNone(difference)
+        self.assertGreaterEqual(difference[0], SYSTEM_BACK_HITBOX[0])
+        self.assertGreaterEqual(difference[1], SYSTEM_BACK_HITBOX[1])
+        self.assertLessEqual(difference[2], SYSTEM_BACK_HITBOX[2])
+        self.assertLessEqual(difference[3], SYSTEM_BACK_HITBOX[3])
+        self.assertEqual(ImageColor.getrgb(MUTED), pressed.getpixel((65, 193)))
+
+    def test_phase_7_system_and_changed_menu_hashes_are_exact(self) -> None:
+        value = complete_v2_node()
+        state = UiState(screen=Screen.SYSTEM)
+        scenarios = {
+            "system_default_target": render(None, ui_state=state),
+            "system_configured_target": render(
+                value, ui_state=state, nodes=(value,), local_target_name="display-rpi"
+            ),
+            "system_long_target": render(
+                value,
+                ui_state=state,
+                nodes=(value,),
+                local_target_name="an extremely long configured local display target",
+            ),
+            "system_no_nodes": render(None, ui_state=state, nodes=()),
+            "system_hub_offline": render(None, hub_online=False, ui_state=state, nodes=()),
+            "system_back_pressed": render(None, ui_state=state, pressed_action="system_back"),
+        }
+        self.assertEqual(set(SYSTEM_RENDER_HASHES), set(scenarios))
+        for name, image in scenarios.items():
+            self.assertEqual(
+                SYSTEM_RENDER_HASHES[name],
+                hashlib.sha256(image.tobytes()).hexdigest(),
+            )
+        self.assertEqual(
+            scenarios["system_default_target"].tobytes(),
+            scenarios["system_no_nodes"].tobytes(),
+        )
+        self.assertEqual(
+            scenarios["system_default_target"].tobytes(),
+            scenarios["system_hub_offline"].tobytes(),
+        )
+
+    def test_phase_7_application_uses_local_target_config_without_power_execution(self) -> None:
+        app_source = Path("display/app.py").read_text()
+        self.assertIn('config.get("local_node_id")', app_source)
+        self.assertIn('or "LOCAL DISPLAY"', app_source)
+        self.assertIn("local_target_name=local_target_name", app_source)
+        self.assertIn("local_target_name,", app_source)
+        display_source = "\n".join(
+            path.read_text() for path in Path("display").glob("*.py")
+        )
+        for forbidden in ("subprocess", "os.system", "systemctl", "power.sock", "AF_UNIX"):
+            self.assertNotIn(forbidden, display_source)
 
     def test_calibration_maps_and_clamps_coordinates(self) -> None:
         calibration = {
