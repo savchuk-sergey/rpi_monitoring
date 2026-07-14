@@ -143,8 +143,23 @@ def _available(node: dict[str, Any], prefix: str, fallback: bool) -> bool:
     return fallback if not matches else any(value.get("supported") is True for value in matches)
 
 
-STANDARD_VALUES_LAYOUT = ValuesLayout(
-    row_y_positions=(91, 112, 133, 154, 175),
+FOUR_ROW_VALUES_LAYOUT = ValuesLayout(
+    row_y_positions=(
+        48,
+        74,
+        100,
+        126,
+    ),
+)
+
+FIVE_ROW_VALUES_LAYOUT = ValuesLayout(
+    row_y_positions=(
+        42,
+        63,
+        84,
+        105,
+        126,
+    ),
 )
 
 HEALTH_VALUES_LAYOUT = ValuesLayout(
@@ -195,7 +210,7 @@ CATEGORIES = (
             ValueRow("power", "POWER", lambda node, _, __: power(node.get("cpu", {}).get("power_w"), unsupported=True)),
             ValueRow("clock", "CLOCK", lambda node, _, __: clock(node.get("cpu", {}).get("clock_mhz"))),
         ),
-        STANDARD_VALUES_LAYOUT,
+        FOUR_ROW_VALUES_LAYOUT,
         (
             ChartMetric("load", "LOAD", "%", _nested("cpu", "usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
             ChartMetric("temperature", "TEMP", "C", _nested("cpu", "temperature_c"), TEMPERATURE_SCALE, TEMPERATURE_THRESHOLDS),
@@ -214,7 +229,7 @@ CATEGORIES = (
             ValueRow("swap", "SWAP", lambda node, _, __: bytes_pair(node.get("memory", {}).get("swap_used_bytes"), node.get("memory", {}).get("swap_total_bytes"), zero_is_off=True)),
             ValueRow("psi", "PSI", lambda node, _, __: percent(node.get("memory", {}).get("pressure_some_percent"))),
         ),
-        STANDARD_VALUES_LAYOUT,
+        FOUR_ROW_VALUES_LAYOUT,
         (
             ChartMetric("ram", "RAM", "%", _nested("memory", "usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
             ChartMetric("swap", "SWAP", "%", _nested("memory", "swap_usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
@@ -233,7 +248,7 @@ CATEGORIES = (
             ValueRow("vram", "VRAM", lambda node, index, __: bytes_pair(_gpu_device(node, index).get("memory_used_bytes"), _gpu_device(node, index).get("memory_total_bytes"))),
             ValueRow("fan_clock", "FAN / CLK", lambda node, index, __: f"{percent(_gpu_device(node, index).get('fan_percent'))} / {clock(_gpu_device(node, index).get('clock_mhz'))}"),
         ),
-        STANDARD_VALUES_LAYOUT,
+        FIVE_ROW_VALUES_LAYOUT,
         (
             ChartMetric("load", "LOAD", "%", _gpu("usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
             ChartMetric("temperature", "TEMP", "C", _gpu("temperature_c"), TEMPERATURE_SCALE, TEMPERATURE_THRESHOLDS),
@@ -253,7 +268,7 @@ CATEGORIES = (
             ValueRow("read_write", "READ / WRITE", lambda node, _, __: f"{rate(node.get('storage', {}).get('read_bytes_per_second'))} / {rate(node.get('storage', {}).get('write_bytes_per_second'))}"),
             ValueRow("temperature", "TEMP", lambda node, _, __: temperature(node.get("storage", {}).get("temperature_c"), unsupported=True)),
         ),
-        STANDARD_VALUES_LAYOUT,
+        FIVE_ROW_VALUES_LAYOUT,
         (
             ChartMetric("used", "USED", "%", _nested("storage", "usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
             ChartMetric("read", "READ", "B/s", _nested("storage", "read_bytes_per_second"), DYNAMIC_SCALE),
@@ -272,7 +287,7 @@ CATEGORIES = (
             ValueRow("down", "DOWN", lambda node, _, __: rate(node.get("network", {}).get("down_bytes_per_second"))),
             ValueRow("up", "UP", lambda node, _, __: rate(node.get("network", {}).get("up_bytes_per_second"))),
         ),
-        STANDARD_VALUES_LAYOUT,
+        FOUR_ROW_VALUES_LAYOUT,
         (
             ChartMetric("down", "DOWN", "B/s", _nested("network", "down_bytes_per_second"), DYNAMIC_SCALE),
             ChartMetric("up", "UP", "B/s", _nested("network", "up_bytes_per_second"), DYNAMIC_SCALE),
@@ -302,6 +317,15 @@ CATEGORIES = (
 
 def category(category_id: str) -> Category:
     return next((item for item in CATEGORIES if item.id == category_id), CATEGORIES[0])
+
+
+def can_open_graph(category_id: str) -> bool:
+    selected = category(category_id)
+    return (
+        selected.id == category_id
+        and selected.id != "health"
+        and bool(selected.chart_metrics)
+    )
 
 
 def default_category(node: dict[str, Any]) -> Category:

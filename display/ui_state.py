@@ -2,8 +2,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
-from display.categories import category, category_at, default_category, detail_view_at, metric_at
-from display.navigation import move, selected_index, touch_action
+from display.categories import can_open_graph, category, category_at, default_category, detail_view_at, metric_at
+from display.navigation import move, selected_index, touch_action, values_action_at
 
 
 class Screen(Enum):
@@ -124,6 +124,23 @@ _ACTIVE_SCREENS = {
 }
 
 
+def visible_action_at(
+    state: UiState,
+    node: dict[str, Any] | None,
+    x: int,
+    y: int,
+) -> str | None:
+    footer_action = touch_action(x, y)
+    if footer_action is not None:
+        return footer_action
+    if state.screen != Screen.VALUES or node is None:
+        return None
+    category_id = state.category_id(node)
+    if not can_open_graph(category_id):
+        return None
+    return values_action_at(x, y)
+
+
 def _select_node(
     state: UiState,
     nodes: tuple[dict[str, Any], ...],
@@ -174,7 +191,15 @@ def reduce_ui(
     if isinstance(event, (ShortPress, LongPress)):
         next_state.last_interaction_at = event.now
         next_state.pause_until = event.now + context.pause_after_touch_seconds
-        action = touch_action(event.x, event.y)
+        node = None
+        if context.nodes:
+            index = selected_index(
+                context.nodes,
+                state.selected_node_id,
+                state.node_index_hint,
+            )
+            node = context.nodes[index]
+        action = visible_action_at(state, node, event.x, event.y)
 
         if isinstance(event, LongPress):
             if action == "center" and state.screen in {
@@ -207,6 +232,15 @@ def reduce_ui(
                     completed_action=action,
                 )
             return UiTransition(next_state)
+
+        if action == "open_graph":
+            next_state.screen = Screen.GRAPH
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action="open_graph",
+            )
 
         if action == "center":
             if state.screen == Screen.OVERVIEW and context.nodes:
@@ -262,7 +296,10 @@ def reduce_ui(
                 )
             return UiTransition(next_state)
 
-        if state.screen in {Screen.VALUES, Screen.GRAPH} and context.nodes:
+        if state.screen == Screen.VALUES:
+            return UiTransition(next_state)
+
+        if state.screen == Screen.GRAPH and context.nodes:
             selected_view = detail_view_at(event.x, event.y)
             if selected_view:
                 next_state.screen = Screen(selected_view)

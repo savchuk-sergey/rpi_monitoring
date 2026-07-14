@@ -11,7 +11,7 @@ from display.drivers.ili9341 import ILI9341
 from display.drivers.xpt2046 import XPT2046
 from display.gestures import GestureKind, GestureState, TouchRecognizer
 from display.history import HistoryStore
-from display.navigation import map_touch, selected_index, touch_action
+from display.navigation import map_touch, selected_index
 from display.ui_state import (
     AutoRotateTick,
     DataRefreshed,
@@ -22,6 +22,7 @@ from display.ui_state import (
     UiEffect,
     UiState,
     reduce_ui,
+    visible_action_at,
 )
 from display.renderer import render
 
@@ -116,7 +117,13 @@ async def run(config: dict) -> None:
                     gesture = recognizer.update(True, x, y, now)
                     if was_idle and recognizer.state == GestureState.PRESSED:
                         touch_started = now
-                        pressed_action = touch_action(x, y)
+                        index = selected_index(
+                            nodes,
+                            state.selected_node_id,
+                            state.node_index_hint,
+                        )
+                        node = nodes[index] if nodes else None
+                        pressed_action = visible_action_at(state, node, x, y)
                         feedback_pending = pressed_action is not None
                         changed |= feedback_pending
                     elif recognizer.state == GestureState.WAIT_RELEASE and pressed_action:

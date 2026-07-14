@@ -5,7 +5,7 @@ from math import ceil
 
 from PIL import Image, ImageDraw, ImageFont
 
-from display.categories import CATEGORIES, category
+from display.categories import CATEGORIES, can_open_graph, category
 from display.detail_model import ChartMetric, ScaleMode, ThresholdTone, ValueTone
 from display.formatting import (
     boolean as _format_bool,
@@ -19,6 +19,7 @@ from display.formatting import (
     uptime as _format_uptime,
 )
 from display.history import HistoryStore, Sample
+from display.navigation import VALUES_GRAPH_BUTTON_RECT
 from display.ui_state import Screen, UiState
 
 
@@ -65,7 +66,7 @@ def render(
         _menu(draw, fonts, node, state)
     elif state.screen in {Screen.VALUES, Screen.GRAPH}:
         _detail_header(draw, fonts, node, position, state, status_color, age)
-        _details(draw, fonts, node, state, history, age, now)
+        _details(draw, fonts, node, state, history, age, now, pressed_action)
     elif state.screen == Screen.OVERVIEW:
         _header(draw, fonts, node, position, status, status_color, age)
         cpu = node.get("cpu", {})
@@ -133,11 +134,17 @@ def _details(
     history: HistoryStore | None,
     age: str,
     now: datetime | None,
+    pressed_action: str | None,
 ) -> None:
     category_id = state.category_id(node)
     selected_category = category(category_id)
     if category_id == "health":
         _values_detail(draw, fonts, node, state, age)
+        return
+    if state.screen == Screen.VALUES:
+        _values_detail(draw, fonts, node, state, age)
+        if can_open_graph(category_id):
+            _open_graph_action(draw, fonts, pressed_action == "open_graph")
         return
     metrics = selected_category.chart_metrics
     selected_metric_id = state.metric_id(node)
@@ -174,9 +181,6 @@ def _details(
         if selected:
             draw.line((x - 48, 78, x + 48, 78), fill=BRIGHT, width=2)
 
-    if state.screen == Screen.VALUES:
-        _values_detail(draw, fonts, node, state, age)
-        return
     samples = (
         history.series(node["node_id"], category_id, selected_metric.id)
         if history
@@ -190,6 +194,26 @@ def _details(
         selected_metric.value(node, state.selected_gpu_index),
         now,
         history.window_seconds if history else 300,
+    )
+
+
+def _open_graph_action(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    pressed: bool,
+) -> None:
+    draw.rectangle(
+        VALUES_GRAPH_BUTTON_RECT,
+        fill=MUTED if pressed else None,
+        outline=None if pressed else GREEN,
+        width=1,
+    )
+    draw.text(
+        (160, 166),
+        "OPEN GRAPH",
+        font=fonts["detail"],
+        fill=BACKGROUND if pressed else GREEN,
+        anchor="mm",
     )
 
 def _values_detail(

@@ -3,9 +3,12 @@ import unittest
 from display.categories import (
     CATEGORIES,
     DYNAMIC_SCALE,
+    FIVE_ROW_VALUES_LAYOUT,
+    FOUR_ROW_VALUES_LAYOUT,
     PERCENT_THRESHOLDS,
     TEMPERATURE_THRESHOLDS,
     Category,
+    can_open_graph,
     category,
 )
 from display.detail_model import (
@@ -190,6 +193,14 @@ class DetailModelTests(unittest.TestCase):
             "network": ("down", "up"),
             "health": ("temperature", "power", "errors"),
         }
+        expected_metric_definitions = {
+            "cpu": (("load", "LOAD", "%"), ("temperature", "TEMP", "C"), ("clock", "CLOCK", "MHz"), ("power", "PWR", "W")),
+            "memory": (("ram", "RAM", "%"), ("swap", "SWAP", "%"), ("psi", "PSI", "%")),
+            "gpu": (("load", "LOAD", "%"), ("temperature", "TEMP", "C"), ("vram", "VRAM", "%"), ("power", "PWR", "W")),
+            "storage": (("used", "USED", "%"), ("read", "READ", "B/s"), ("write", "WRITE", "B/s"), ("temperature", "TEMP", "C")),
+            "network": (("down", "DOWN", "B/s"), ("up", "UP", "B/s")),
+            "health": (("temperature", "TEMP", "C"), ("power", "PWR", "W"), ("errors", "ERRORS", "")),
+        }
         self.assertEqual(tuple(expected_rows), tuple(item.id for item in CATEGORIES))
         for item in CATEGORIES:
             with self.subTest(category=item.id):
@@ -198,10 +209,59 @@ class DetailModelTests(unittest.TestCase):
                 self.assertFalse(hasattr(item, "metrics"))
                 self.assertEqual(expected_rows[item.id], tuple(row.id for row in item.value_rows))
                 self.assertEqual(expected_metrics[item.id], tuple(metric.id for metric in item.chart_metrics))
+                self.assertEqual(
+                    expected_metric_definitions[item.id],
+                    tuple((metric.id, metric.title, metric.unit) for metric in item.chart_metrics),
+                )
                 self.assertEqual(len(item.value_rows), len({row.id for row in item.value_rows}))
                 self.assertEqual(len(item.chart_metrics), len({metric.id for metric in item.chart_metrics}))
                 self.assertLessEqual(len(item.value_rows), len(item.values_layout.row_y_positions))
         self.assertEqual(205, category("gpu").value_rows[0].fit_width)
+
+    def test_values_layout_assignments_and_graph_eligibility_are_exact(self) -> None:
+        expected_layouts = {
+            "cpu": (48, 74, 100, 126),
+            "memory": (48, 74, 100, 126),
+            "gpu": (42, 63, 84, 105, 126),
+            "storage": (42, 63, 84, 105, 126),
+            "network": (48, 74, 100, 126),
+            "health": (80, 103, 126, 149, 172),
+        }
+        for category_id, positions in expected_layouts.items():
+            with self.subTest(category=category_id):
+                self.assertEqual(positions, category(category_id).values_layout.row_y_positions)
+        self.assertIs(FOUR_ROW_VALUES_LAYOUT, category("cpu").values_layout)
+        self.assertIs(FOUR_ROW_VALUES_LAYOUT, category("memory").values_layout)
+        self.assertIs(FOUR_ROW_VALUES_LAYOUT, category("network").values_layout)
+        self.assertIs(FIVE_ROW_VALUES_LAYOUT, category("gpu").values_layout)
+        self.assertIs(FIVE_ROW_VALUES_LAYOUT, category("storage").values_layout)
+        self.assertEqual(("SYSTEM HEALTH", 54), (
+            category("health").values_layout.title,
+            category("health").values_layout.title_y,
+        ))
+        self.assertEqual(
+            {
+                "cpu": True,
+                "memory": True,
+                "gpu": True,
+                "storage": True,
+                "network": True,
+                "health": False,
+                "missing": False,
+            },
+            {
+                category_id: can_open_graph(category_id)
+                for category_id in (
+                    "cpu",
+                    "memory",
+                    "gpu",
+                    "storage",
+                    "network",
+                    "health",
+                    "missing",
+                )
+            },
+        )
 
     def test_chart_scales_and_thresholds_are_exact(self) -> None:
         expected_modes = {

@@ -1,5 +1,6 @@
 import copy
 import unittest
+from unittest.mock import patch
 
 from display.renderer import _status
 from display.ui_state import (
@@ -14,6 +15,7 @@ from display.ui_state import (
     UiEffect,
     UiState,
     reduce_ui,
+    visible_action_at,
 )
 
 
@@ -113,6 +115,34 @@ class UiStateTests(unittest.TestCase):
         state.metric_by_category["memory"] = "ram_load"
         self.assertEqual("ram", state.metric_id(value))
         self.assertEqual("cpu", UiState().category_id(waiting()))
+
+    def test_visible_action_resolves_values_and_preserves_inputs(self) -> None:
+        value = node(
+            gpu=[{"usage_percent": 50}],
+            storage={"usage_percent": 50},
+            network={"interface": "eth0"},
+        )
+        for category_id in ("cpu", "memory", "gpu", "storage", "network"):
+            state = UiState(screen=Screen.VALUES, selected_category_id=category_id)
+            with self.subTest(category=category_id):
+                self.assertEqual("open_graph", visible_action_at(state, value, 160, 166))
+        self.assertIsNone(visible_action_at(
+            UiState(screen=Screen.VALUES, selected_category_id="health"),
+            value,
+            160,
+            166,
+        ))
+        self.assertIsNone(visible_action_at(UiState(screen=Screen.VALUES), None, 160, 166))
+        for screen in (Screen.GRAPH, Screen.OVERVIEW, Screen.MAIN_MENU):
+            self.assertIsNone(visible_action_at(UiState(screen=screen), value, 160, 166))
+        state = UiState(screen=Screen.VALUES, metric_by_category={"cpu": "temperature"})
+        state_before = copy.deepcopy(state)
+        node_before = copy.deepcopy(value)
+        self.assertEqual("previous", visible_action_at(state, value, 10, 210))
+        self.assertEqual("center", visible_action_at(state, value, 160, 210))
+        self.assertEqual("next", visible_action_at(state, value, 300, 210))
+        self.assertEqual(state_before, state)
+        self.assertEqual(node_before, value)
 
     def test_reducer_copies_state_dictionary_and_does_not_mutate_inputs(self) -> None:
         value = node()
@@ -268,7 +298,11 @@ class UiStateTests(unittest.TestCase):
     def test_previous_and_next_wrap_and_reset_gpu(self) -> None:
         nodes = (node("a"), node("b"))
         previous = reduce_ui(
-            UiState(selected_node_id="a", selected_gpu_index=2),
+            UiState(
+                screen=Screen.VALUES,
+                selected_node_id="a",
+                selected_gpu_index=2,
+            ),
             ShortPress(10, 210, 7),
             context(nodes),
         )
@@ -279,6 +313,7 @@ class UiStateTests(unittest.TestCase):
         ))
         self.assertEqual("previous", previous.completed_action)
         self.assertEqual(7, previous.state.last_rotation_at)
+        self.assertEqual(Screen.VALUES, previous.state.screen)
 
         following = reduce_ui(
             previous.state,
@@ -403,28 +438,103 @@ class UiStateTests(unittest.TestCase):
         self.assertFalse(rejected.changed)
         self.assertEqual(Screen.MAIN_MENU, rejected.state.screen)
 
-    def test_values_graph_tabs_and_metric_selection(self) -> None:
+    def test_values_open_graph_preserves_state_for_every_eligible_category(self) -> None:
+        value = node(
+            gpu=[{"usage_percent": 50}],
+            storage={"usage_percent": 50},
+            network={"interface": "eth0"},
+        )
+        metrics = {
+            "cpu": "temperature",
+            "memory": "psi",
+            "gpu": "power",
+            "storage": "read",
+            "network": "up",
+        }
+        for category_id in metrics:
+            state = UiState(
+                screen=Screen.VALUES,
+                selected_node_id="desktop",
+                node_index_hint=0,
+                selected_category_id=category_id,
+                metric_by_category=dict(metrics),
+                selected_gpu_index=2,
+                menu_page=1,
+                nodes_page=3,
+                pending_power_action=PowerAction.REBOOT,
+                confirmation_started_at=4.5,
+            )
+            with self.subTest(category=category_id):
+                transition = reduce_ui(state, ShortPress(160, 166, 10), context((value,)))
+                self.assertEqual(Screen.GRAPH, transition.state.screen)
+                self.assertTrue(transition.changed and transition.full_refresh)
+                self.assertEqual("open_graph", transition.completed_action)
+                self.assertIs(UiEffect.NONE, transition.effect)
+                self.assertEqual("desktop", transition.state.selected_node_id)
+                self.assertEqual(0, transition.state.node_index_hint)
+                self.assertEqual(category_id, transition.state.selected_category_id)
+                self.assertEqual(metrics, transition.state.metric_by_category)
+                self.assertEqual(2, transition.state.selected_gpu_index)
+                self.assertEqual((1, 3), (transition.state.menu_page, transition.state.nodes_page))
+                self.assertIs(PowerAction.REBOOT, transition.state.pending_power_action)
+                self.assertEqual(4.5, transition.state.confirmation_started_at)
+
+    def test_values_health_false_controls_and_long_open_graph_are_noops(self) -> None:
         value = node()
-        graph = reduce_ui(
-            UiState(screen=Screen.VALUES, selected_node_id="desktop"),
-            ShortPress(240, 68, 1),
+        health = reduce_ui(
+            UiState(screen=Screen.VALUES, selected_category_id="health"),
+            ShortPress(160, 166, 1),
             context((value,)),
         )
-        self.assertEqual(Screen.GRAPH, graph.state.screen)
-        self.assertEqual("view_graph", graph.completed_action)
-        values = reduce_ui(graph.state, ShortPress(80, 68, 2), context((value,)))
+        self.assertEqual(Screen.VALUES, health.state.screen)
+        self.assertFalse(health.changed)
+        self.assertIsNone(health.completed_action)
+
+        state = UiState(
+            screen=Screen.VALUES,
+            selected_node_id="desktop",
+            metric_by_category={"cpu": "temperature"},
+        )
+        with patch("display.ui_state.metric_at") as metric, \
+                patch("display.ui_state.detail_view_at") as detail_view:
+            for event in (
+                ShortPress(150, 40, 2),
+                ShortPress(240, 68, 3),
+                ShortPress(10, 100, 4),
+                LongPress(160, 166, 5),
+            ):
+                with self.subTest(event=event):
+                    transition = reduce_ui(state, event, context((value,)))
+                    self.assertEqual(Screen.VALUES, transition.state.screen)
+                    self.assertEqual("temperature", transition.state.metric_by_category["cpu"])
+                    self.assertFalse(transition.changed)
+                    self.assertIsNone(transition.completed_action)
+                    self.assertEqual(event.now, transition.state.last_interaction_at)
+            metric.assert_not_called()
+            detail_view.assert_not_called()
+
+    def test_graph_tabs_metric_selection_and_footer_remain_unchanged(self) -> None:
+        value = node()
+        selected = reduce_ui(
+            UiState(screen=Screen.GRAPH, selected_node_id="desktop"),
+            ShortPress(150, 40, 1),
+            context((value,)),
+        )
+        self.assertEqual("temperature", selected.state.metric_by_category["cpu"])
+        self.assertEqual("metric_temperature", selected.completed_action)
+        self.assertFalse(selected.full_refresh)
+
+        values = reduce_ui(selected.state, ShortPress(80, 68, 2), context((value,)))
         self.assertEqual(Screen.VALUES, values.state.screen)
         self.assertEqual("view_values", values.completed_action)
 
-        for screen in (Screen.VALUES, Screen.GRAPH):
-            selected = reduce_ui(
-                UiState(screen=screen, selected_node_id="desktop"),
-                ShortPress(150, 40, 3),
-                context((value,)),
-            )
-            self.assertEqual("temperature", selected.state.metric_by_category["cpu"])
-            self.assertEqual("metric_temperature", selected.completed_action)
-            self.assertFalse(selected.full_refresh)
+        overview = reduce_ui(
+            UiState(screen=Screen.GRAPH),
+            ShortPress(160, 210, 3),
+            context((value,)),
+        )
+        self.assertEqual(Screen.OVERVIEW, overview.state.screen)
+        self.assertEqual("short_center", overview.completed_action)
 
     def test_timeout_boundaries_touch_suppression_and_zero_disable(self) -> None:
         cases = (

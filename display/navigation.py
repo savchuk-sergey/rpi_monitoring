@@ -7,6 +7,8 @@ Rect = tuple[int, int, int, int]
 PREVIOUS_HITBOX: Rect = (0, FOOTER_TOP, 61, 240)
 MODE_HITBOX: Rect = (67, FOOTER_TOP, 253, 240)
 NEXT_HITBOX: Rect = (259, FOOTER_TOP, 320, 240)
+VALUES_GRAPH_HITBOX: Rect = (0, 140, 320, 192)
+VALUES_GRAPH_BUTTON_RECT: Rect = (8, 142, 312, 190)
 
 
 def move(index: int, count: int, delta: int) -> int:
@@ -32,6 +34,11 @@ def touch_action(x: int, y: int) -> str | None:
         if left <= x < right and top <= y < bottom:
             return action
     return None
+
+
+def values_action_at(x: int, y: int) -> str | None:
+    left, top, right, bottom = VALUES_GRAPH_HITBOX
+    return "open_graph" if left <= x < right and top <= y < bottom else None
 
 
 def map_touch(raw_x: int, raw_y: int, calibration: dict[str, Any]) -> tuple[int, int]:
