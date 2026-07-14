@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from PIL import Image, ImageColor
+from PIL import Image, ImageColor, ImageDraw
 
 from display.drivers.ili9341 import ILI9341, rgb565
 from display.categories import CATEGORIES, category, category_at, detail_view_at, metric_at
@@ -42,7 +42,7 @@ from display.renderer import (
     _value,
     render,
 )
-from display.ui_state import Screen, UiState
+from display.ui_state import ShortPress, Screen, UiContext, UiState, reduce_ui
 from tools.touch_calibrate import calculate
 
 
@@ -420,10 +420,10 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual((320, 240), graph.size)
         self.assertNotEqual(graph.tobytes(), values.tobytes())
 
-    def test_values_ignore_chart_selection_but_graph_uses_it(self) -> None:
+    def test_values_content_ignores_chart_selection_but_selector_reflects_it(self) -> None:
         value = complete_v2_node()
         now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
-        values_frames = {
+        values_frames = [
             render(
                 value,
                 ui_state=UiState(
@@ -431,10 +431,11 @@ class DisplayTests(unittest.TestCase):
                     metric_by_category={"cpu": metric_id},
                 ),
                 now=now,
-            ).tobytes()
+            )
             for metric_id in ("load", "temperature", "power")
-        }
-        self.assertEqual(1, len(values_frames))
+        ]
+        self.assertEqual(1, len({frame.crop((0, 80, 320, 192)).tobytes() for frame in values_frames}))
+        self.assertEqual(3, len({frame.tobytes() for frame in values_frames}))
 
         history = HistoryStore()
         history.add(complete_v2_node(timestamp_utc="2026-07-12T03:00:00Z"))
@@ -452,16 +453,54 @@ class DisplayTests(unittest.TestCase):
         }
         self.assertEqual(2, len(graph_frames))
 
+    def test_values_metric_selection_stays_visible_when_opening_graph(self) -> None:
+        value = complete_v2_node()
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        context = UiContext((value,), 30, 45, 15, 10)
+        load_state = UiState(
+            screen=Screen.VALUES,
+            selected_node_id=value["node_id"],
+            metric_by_category={"cpu": "load"},
+        )
+        load_frame = render(value, ui_state=load_state, now=now)
+
+        selected = reduce_ui(load_state, ShortPress(150, 40, 1), context).state
+        self.assertEqual("temperature", selected.metric_by_category["cpu"])
+        temperature_frame = render(value, ui_state=selected, now=now)
+        self.assertEqual(
+            load_frame.crop((0, 80, 320, 192)).tobytes(),
+            temperature_frame.crop((0, 80, 320, 192)).tobytes(),
+        )
+        self.assertEqual(ImageColor.getrgb(BRIGHT), temperature_frame.getpixel((120, 54)))
+        self.assertNotEqual(ImageColor.getrgb(BRIGHT), temperature_frame.getpixel((40, 54)))
+
+        graph = reduce_ui(selected, ShortPress(240, 68, 2), context).state
+        self.assertEqual(Screen.GRAPH, graph.screen)
+        with patch("display.renderer._chart", wraps=_chart) as chart:
+            render(value, ui_state=graph, now=now)
+        self.assertEqual("temperature", chart.call_args.args[3].id)
+
     def test_graph_uses_history_window_seconds_for_chart_bounds(self) -> None:
         history = HistoryStore(window_seconds=42)
-        with patch("display.renderer._chart", wraps=_chart) as chart:
+        history.add(complete_v2_node(timestamp_utc="2026-07-12T03:00:00Z"))
+        history.add(complete_v2_node(timestamp_utc="2026-07-12T03:00:42Z"))
+        points = []
+        original_line = ImageDraw.ImageDraw.line
+
+        def record_line(draw, xy, *args, **kwargs):
+            if isinstance(xy, list) and kwargs.get("fill") == GREEN and kwargs.get("width") == 2:
+                points.extend(xy)
+            return original_line(draw, xy, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "line", new=record_line):
             render(
-                complete_v2_node(),
+                complete_v2_node(timestamp_utc="2026-07-12T03:00:42Z"),
                 ui_state=UiState(screen=Screen.GRAPH),
                 history=history,
-                now=datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc),
+                now=datetime(2026, 7, 12, 3, 0, 42, tzinfo=timezone.utc),
             )
-        self.assertEqual(42, chart.call_args.args[-1])
+        self.assertEqual([28, 310], [points[0][0], points[-1][0]])
+        self.assertTrue(all(28 <= x <= 310 and 82 <= y <= 160 for x, y in points))
 
     def test_v2_values_and_history_use_extended_metrics(self) -> None:
         value = node(

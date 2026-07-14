@@ -19,6 +19,7 @@ from display.detail_model import (
     ValueTone,
 )
 from display.formatting import boolean, bytes_pair, clock, number, percent, power, rate, temperature, uptime
+from display.history import HistoryStore
 from display.renderer import (
     _format_bool,
     _format_bytes_pair,
@@ -85,6 +86,16 @@ def complete_node(**changes) -> dict:
 
 
 class DetailModelTests(unittest.TestCase):
+    def test_history_store_requires_positive_limits(self) -> None:
+        for kwargs, message in (
+            ({"window_seconds": 0}, "window_seconds must be greater than zero"),
+            ({"window_seconds": -1}, "window_seconds must be greater than zero"),
+            ({"max_samples": 0}, "max_samples must be greater than zero"),
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(ValueError, message):
+                HistoryStore(**kwargs)
+        self.assertEqual(1, HistoryStore(window_seconds=1).window_seconds)
+
     def test_enum_values_are_exact(self) -> None:
         self.assertEqual(
             {"FIXED": "fixed", "DYNAMIC_ZERO_BASED": "dynamic_zero_based", "DYNAMIC_RANGE": "dynamic_range"},

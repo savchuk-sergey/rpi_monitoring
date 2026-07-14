@@ -14,6 +14,10 @@ class Sample:
 
 class HistoryStore:
     def __init__(self, window_seconds: int = 300, max_samples: int = 180) -> None:
+        if window_seconds <= 0:
+            raise ValueError("window_seconds must be greater than zero")
+        if max_samples <= 0:
+            raise ValueError("max_samples must be greater than zero")
         self.window_seconds = window_seconds
         self.max_samples = max_samples
         self._last_timestamp: dict[str, str] = {}

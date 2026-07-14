@@ -140,7 +140,7 @@ def _details(
         _values_detail(draw, fonts, node, state, age)
         return
     metrics = selected_category.chart_metrics
-    selected_metric_id = state.metric_id(node) if state.screen == Screen.GRAPH else metrics[0].id
+    selected_metric_id = state.metric_id(node)
     selected_metric = next(
         (metric for metric in metrics if metric.id == selected_metric_id),
         metrics[0],
