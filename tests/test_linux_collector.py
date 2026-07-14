@@ -155,9 +155,14 @@ class LinuxCollectorTests(unittest.TestCase):
             sample = LinuxCollector(self.root).collect("node", "Node")
         self.assertEqual("node", sample["node_id"])
         self.assertEqual(2, sample["schema_version"])
-        self.assertEqual("0.2.0", sample["collector"]["version"])
+        self.assertEqual("0.3.0", sample["collector"]["version"])
         self.assertGreater(len(sample["collector"]["errors"]), 0)
         self.assertEqual([], sample["gpu"])
+        self.assertTrue(sample["capabilities"]["storage.usage_percent"]["supported"])
+        self.assertEqual(
+            "sensor_not_found",
+            sample["capabilities"]["gpu.usage_percent"]["reason"],
+        )
 
 
 if __name__ == "__main__":

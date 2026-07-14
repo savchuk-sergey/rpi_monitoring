@@ -5,6 +5,8 @@ import hmac
 import json
 import logging
 import signal
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,12 +22,30 @@ MAX_FUTURE_SKEW = timedelta(seconds=30)
 
 
 class HubState:
-    def __init__(self, token_hashes: dict[str, str], offline_seconds: int = 10):
+    def __init__(
+        self,
+        token_hashes: dict[str, str],
+        offline_seconds: int = 10,
+        *,
+        config_path: Path | None = None,
+        database_path: Path | None = None,
+        state_retention_seconds: int = 86400,
+        state_persist_seconds: int = 30,
+    ):
         self.token_hashes = token_hashes
         self.offline_seconds = offline_seconds
+        self.config_path = config_path
+        self.database_path = database_path
+        self.state_retention_seconds = state_retention_seconds
+        self.state_persist_seconds = state_persist_seconds
         self.samples: dict[str, dict[str, Any]] = {}
+        self._last_persisted: dict[str, datetime] = {}
+        self._config_mtime_ns = config_path.stat().st_mtime_ns if config_path else None
+        if database_path:
+            self._restore()
 
     def authenticate(self, node_id: str, token: str) -> bool:
+        self._reload_config()
         expected = self.token_hashes.get(node_id, "0" * 64)
         actual = hashlib.sha256(token.encode()).hexdigest()
         return len(token) >= 32 and hmac.compare_digest(actual, expected)
@@ -40,13 +60,33 @@ class HubState:
         if current and timestamp <= _timestamp(current["sample"]):
             return False
         self.samples[sample["node_id"]] = {"sample": sample, "received_at": now}
+        self._persist(sample, now)
         return True
 
     def current(self) -> dict[str, Any]:
+        self._reload_config()
         now = datetime.now(timezone.utc)
         nodes = []
-        for node_id in sorted(self.samples):
-            record = self.samples[node_id]
+        for node_id in sorted(self.token_hashes):
+            record = self.samples.get(node_id)
+            if record is None:
+                nodes.append(
+                    {
+                        "node_id": node_id,
+                        "display_name": node_id,
+                        "cpu": {
+                            "usage_percent": None,
+                            "temperature_c": None,
+                            "power_w": None,
+                        },
+                        "memory": {"usage_percent": None},
+                        "gpu": [],
+                        "collector": {"version": None, "errors": []},
+                        "online": False,
+                        "waiting": True,
+                    }
+                )
+                continue
             nodes.append(
                 {
                     **record["sample"],
@@ -61,6 +101,86 @@ class HubState:
             "generated_at_utc": now.isoformat().replace("+00:00", "Z"),
             "nodes": nodes,
         }
+
+    def _reload_config(self) -> None:
+        if self.config_path is None:
+            return
+        try:
+            mtime = self.config_path.stat().st_mtime_ns
+        except OSError:
+            return
+        if mtime == self._config_mtime_ns:
+            return
+        self._config_mtime_ns = mtime
+        try:
+            config, hashes = _read_config(self.config_path)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            LOG.error("ignoring invalid hub config reload: %s", error)
+            return
+        removed = self.token_hashes.keys() - hashes.keys()
+        self.token_hashes = hashes
+        self.offline_seconds = int(config.get("offline_seconds", 10))
+        self.state_retention_seconds = int(config.get("state_retention_seconds", 86400))
+        self.state_persist_seconds = int(config.get("state_persist_seconds", 30))
+        for node_id in removed:
+            self.samples.pop(node_id, None)
+        if removed and self.database_path:
+            with closing(sqlite3.connect(self.database_path)) as database, database:
+                database.executemany(
+                    "DELETE FROM last_samples WHERE node_id = ?",
+                    ((node_id,) for node_id in removed),
+                )
+
+    def _persist(self, sample: dict[str, Any], received_at: datetime) -> None:
+        if self.database_path is None:
+            return
+        previous = self._last_persisted.get(sample["node_id"])
+        if previous and (received_at - previous).total_seconds() < self.state_persist_seconds:
+            return
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute(
+                """
+                INSERT INTO last_samples(node_id, sample_json, received_at_utc)
+                VALUES (?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    sample_json = excluded.sample_json,
+                    received_at_utc = excluded.received_at_utc
+                """,
+                (
+                    sample["node_id"],
+                    json.dumps(sample, separators=(",", ":")),
+                    received_at.isoformat().replace("+00:00", "Z"),
+                ),
+            )
+        self._last_persisted[sample["node_id"]] = received_at
+
+    def _restore(self) -> None:
+        assert self.database_path is not None
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self.state_retention_seconds)
+        with closing(sqlite3.connect(self.database_path)) as database, database:
+            database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS last_samples(
+                    node_id TEXT PRIMARY KEY,
+                    sample_json TEXT NOT NULL,
+                    received_at_utc TEXT NOT NULL
+                )
+                """
+            )
+            database.execute(
+                "DELETE FROM last_samples WHERE received_at_utc < ?",
+                (cutoff.isoformat().replace("+00:00", "Z"),),
+            )
+            for node_id, payload, received_at in database.execute(
+                "SELECT node_id, sample_json, received_at_utc FROM last_samples"
+            ):
+                if node_id in self.token_hashes:
+                    restored_at = datetime.fromisoformat(received_at.replace("Z", "+00:00"))
+                    self.samples[node_id] = {
+                        "sample": json.loads(payload),
+                        "received_at": restored_at,
+                    }
+                    self._last_persisted[node_id] = restored_at
 
 
 STATE_KEY = web.AppKey("state", HubState)
@@ -112,7 +232,7 @@ async def current_state(request: web.Request) -> web.Response:
     return web.json_response(request.app[STATE_KEY].current())
 
 
-def load_config(path: Path) -> HubState:
+def _read_config(path: Path) -> tuple[dict[str, Any], dict[str, str]]:
     config = json.loads(path.read_text())
     hashes = config.get("token_sha256", {})
     if not hashes or any(
@@ -123,7 +243,24 @@ def load_config(path: Path) -> HubState:
         for node, value in hashes.items()
     ):
         raise ValueError("config must contain token_sha256 node-to-hash mappings")
-    return HubState(hashes, int(config.get("offline_seconds", 10)))
+    return config, hashes
+
+
+def load_config(path: Path) -> HubState:
+    config, hashes = _read_config(path)
+    return HubState(
+        hashes,
+        int(config.get("offline_seconds", 10)),
+        config_path=path,
+        database_path=Path(
+            config.get(
+                "state_database",
+                "/var/lib/homelab-resource-monitor/last-state.sqlite3",
+            )
+        ),
+        state_retention_seconds=int(config.get("state_retention_seconds", 86400)),
+        state_persist_seconds=int(config.get("state_persist_seconds", 30)),
+    )
 
 
 async def serve(state: HubState, public_port: int, local_port: int) -> None:

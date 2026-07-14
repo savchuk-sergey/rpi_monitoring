@@ -48,6 +48,8 @@ public sealed record NetworkMetrics(
     double? UpBytesPerSecond);
 public sealed record OsMetrics(string Family, string Version);
 public sealed record CollectorMetrics(string Version, IReadOnlyList<string> Errors);
+public sealed record MetricCapability(bool Supported, string? Source, string? Reason);
+
 public sealed record TelemetrySample(
     int SchemaVersion,
     string NodeId,
@@ -60,4 +62,5 @@ public sealed record TelemetrySample(
     StorageMetrics Storage,
     NetworkMetrics Network,
     HealthMetrics Health,
+    IReadOnlyDictionary<string, MetricCapability> Capabilities,
     CollectorMetrics Collector);

@@ -54,7 +54,7 @@ try {
     if ($newNode) {
         & scp -q (Join-Path $repo 'deploy\raspberry-pi\add-node-hash.py') "${hubTarget}:${hubHelper}"
         if ($LASTEXITCODE -ne 0) { throw 'Cannot copy the hub registration helper.' }
-        & ssh @ssh $hubTarget "${hubElevate}python3 $hubHelper $NodeId $hash && ${hubElevate}systemctl restart homelab-resource-monitor-hub.service && curl -fs --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:8765/healthz >/dev/null"
+        & ssh @ssh $hubTarget "${hubElevate}python3 $hubHelper $NodeId $hash && curl -fsS http://127.0.0.1:8765/healthz >/dev/null"
         if ($LASTEXITCODE -ne 0) { throw 'Hub node registration failed.' }
     }
     if (Test-Path -LiteralPath $artifact) { Remove-Item -LiteralPath $artifact -Recurse -Force }

@@ -492,6 +492,8 @@ def _number(value: Any) -> str:
 def _status(node: dict[str, Any], hub_online: bool) -> tuple[str, str]:
     if not hub_online:
         return "LINK LOST", AMBER
+    if node.get("waiting"):
+        return "WAITING", AMBER
     if not node.get("online"):
         return "OFFLINE", RED
     errors = node.get("collector", {}).get("errors") or []

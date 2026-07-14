@@ -1,5 +1,8 @@
 {
   "offline_seconds": 10,
+  "state_retention_seconds": 86400,
+  "state_persist_seconds": 30,
+  "state_database": "/var/lib/homelab-resource-monitor/last-state.sqlite3",
   "token_sha256": {
     "display-rpi": "replace-with-lowercase-sha256-hex"
   }

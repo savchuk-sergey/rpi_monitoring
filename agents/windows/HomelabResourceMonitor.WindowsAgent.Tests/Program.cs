@@ -57,13 +57,20 @@ Assert(HardwareCollector.ParseNvidia(null).Count == 0, "missing GPU");
 try { HardwareCollector.ParseNvidia("broken"); throw new Exception("malformed NVIDIA accepted"); }
 catch (FormatException) { }
 
+var capabilities = HardwareCollector.Capabilities(
+    mapped.Cpu, mapped.Memory, mapped.Gpu, mapped.Storage,
+    new("Ethernet", true, 1000, 500));
+Assert(capabilities["cpu.power_w"].Supported, "supported capability");
+Assert(capabilities["memory.pressure_some_percent"].Reason == "unsupported_os", "unsupported capability reason");
+
 var sample = new TelemetrySample(2, "desktop", "Desktop", DateTime.UtcNow,
     new("windows", "test"), mapped.Cpu, mapped.Memory, mapped.Gpu,
     mapped.Storage, new("Ethernet", true, 1000, 500),
-    new(86400, null, null), new("0.2.0", []));
+    new(86400, null, null), capabilities, new("0.3.0", []));
 var json = JsonSerializer.Serialize(sample, AgentConfig.JsonOptions);
 Assert(json.Contains("\"schema_version\":2") && !json.Contains("NaN"), "JSON serialization");
 Assert(json.Contains("\"clock_mhz\":4700"), "v2 JSON fields");
+Assert(json.Contains("\"capabilities\"") && json.Contains("\"unsupported_os\""), "capability JSON fields");
 Assert(json.Contains("Z\""), "UTC timestamp Z serialization");
 Console.WriteLine("Windows collector tests: PASS");
 

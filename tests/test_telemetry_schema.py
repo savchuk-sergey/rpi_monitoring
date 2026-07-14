@@ -43,6 +43,30 @@ class TelemetrySchemaTests(unittest.TestCase):
         sample["health"]["extra"] = True
         self.assert_invalid(sample)
 
+
+    def test_v2_capability_contract_is_strict_and_optional(self) -> None:
+        sample = json.loads((EXAMPLES / "windows-v2.json").read_text())
+        validate_sample(sample)
+
+        invalid = copy.deepcopy(sample)
+        del invalid["capabilities"]["cpu.power_w"]["reason"]
+        self.assert_invalid(invalid)
+
+        invalid = copy.deepcopy(sample)
+        invalid["capabilities"]["cpu.power_w"]["reason"] = "contradiction"
+        self.assert_invalid(invalid)
+
+        invalid = copy.deepcopy(sample)
+        invalid["capabilities"]["CPU"] = {
+            "supported": True,
+            "source": "test",
+            "reason": None,
+        }
+        self.assert_invalid(invalid)
+
+        del sample["capabilities"]
+        validate_sample(sample)
+
     def test_non_finite_numbers_are_rejected(self) -> None:
         for value in (math.nan, math.inf, -math.inf):
             with self.subTest(value=value):

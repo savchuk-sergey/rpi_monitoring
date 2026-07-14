@@ -21,6 +21,11 @@
     "storage": { "$ref": "#/$defs/storage" },
     "network": { "$ref": "#/$defs/network" },
     "health": { "$ref": "#/$defs/health" },
+    "capabilities": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+      "additionalProperties": { "$ref": "#/$defs/capability" }
+    },
     "collector": { "$ref": "#/$defs/collector" }
   },
   "$defs": {
@@ -130,6 +135,26 @@
         "undervoltage": { "$ref": "#/$defs/nullableBoolean" },
         "throttled": { "$ref": "#/$defs/nullableBoolean" }
       }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported", "source", "reason"],
+      "properties": {
+        "supported": { "type": "boolean" },
+        "source": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "reason": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "supported": { "const": true } } },
+          "then": { "properties": { "source": { "type": "string" }, "reason": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "supported": { "const": false } } },
+          "then": { "properties": { "source": { "type": "null" }, "reason": { "type": "string" } } }
+        }
+      ]
     },
     "collector": {
       "type": "object",

@@ -14,7 +14,7 @@ $ssh = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyC
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 if (-not (Test-Path -LiteralPath $CalibrationFile -PathType Leaf)) { throw 'Calibration file not found.' }
-& ssh @ssh $target "hostname >/dev/null && test -e /dev/spidev0.0 && test -e /dev/spidev0.1 && command -v python3 >/dev/null && command -v systemctl >/dev/null && command -v curl >/dev/null && vcgencmd get_throttled && $privilegeCheck && $venvCheck"
+& ssh @ssh $target "hostname >/dev/null && test -e /dev/spidev0.0 && test -e /dev/spidev0.1 && command -v python3 >/dev/null && command -v systemctl >/dev/null && command -v curl >/dev/null && command -v sed >/dev/null && vcgencmd get_throttled && $privilegeCheck && $venvCheck"
 if ($LASTEXITCODE -ne 0) { throw 'Pi preflight failed.' }
 if ($DryRun) { Write-Output 'Dry-run preflight passed; no changes made.'; exit 0 }
 
@@ -30,6 +30,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Source copy failed.' }
     & scp -q -p $CalibrationFile "${target}:${stage}/touch-calibration.json"
     if ($LASTEXITCODE -ne 0) { throw 'Calibration copy failed.' }
+    & ssh @ssh $target "sed -i 's/\r`$//' $stage/deploy/raspberry-pi/install.sh"
+    if ($LASTEXITCODE -ne 0) { throw 'Installer line-ending normalization failed.' }
     $install = "${elevate}sh $stage/deploy/raspberry-pi/install.sh $stage $stage/touch-calibration.json && curl -fsS http://127.0.0.1:8766/api/v1/state >/dev/null"
     $diagnostics = "${elevate}systemctl --no-pager --full status homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service; ${elevate}journalctl --no-pager -n 50 -u homelab-resource-monitor-hub.service -u homelab-resource-monitor-display.service -u homelab-resource-monitor-linux-agent.service"
     & ssh @ssh $target "$install || { $diagnostics; exit 1; }"

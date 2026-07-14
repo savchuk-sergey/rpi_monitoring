@@ -19,6 +19,45 @@ public sealed class HardwareCollector : IDisposable
 
     public HardwareCollector() => _computer.Open();
 
+public static IReadOnlyDictionary<string, MetricCapability> Capabilities(
+        CpuMetrics cpu,
+        MemoryMetrics memory,
+        IReadOnlyList<GpuMetrics> gpu,
+        StorageMetrics storage,
+        NetworkMetrics network)
+    {
+        var hasGpu = gpu.Count > 0;
+        return new Dictionary<string, MetricCapability>
+        {
+            ["cpu.usage_percent"] = Available(cpu.UsagePercent, "librehardwaremonitor"),
+            ["cpu.temperature_c"] = Available(cpu.TemperatureC, "librehardwaremonitor"),
+            ["cpu.power_w"] = Available(cpu.PowerW, "librehardwaremonitor"),
+            ["cpu.clock_mhz"] = Available(cpu.ClockMhz, "librehardwaremonitor"),
+            ["memory.usage_percent"] = Available(memory.UsagePercent, "kernel32"),
+            ["memory.swap_usage_percent"] = Available(memory.SwapUsagePercent, "librehardwaremonitor"),
+            ["memory.pressure_some_percent"] = Unsupported("unsupported_os"),
+            ["gpu.usage_percent"] = Available(hasGpu ? gpu[0].UsagePercent : null, "librehardwaremonitor"),
+            ["gpu.temperature_c"] = Available(hasGpu ? gpu[0].TemperatureC : null, "librehardwaremonitor"),
+            ["gpu.memory_usage_percent"] = Available(hasGpu ? gpu[0].MemoryUsagePercent : null, "librehardwaremonitor"),
+            ["gpu.power_w"] = Available(hasGpu ? gpu[0].PowerW : null, "librehardwaremonitor"),
+            ["storage.usage_percent"] = Available(storage.UsagePercent, "drive_info"),
+            ["storage.read_bytes_per_second"] = Available(storage.ReadBytesPerSecond, "librehardwaremonitor"),
+            ["storage.write_bytes_per_second"] = Available(storage.WriteBytesPerSecond, "librehardwaremonitor"),
+            ["storage.temperature_c"] = Available(storage.TemperatureC, "librehardwaremonitor"),
+            ["network.down_bytes_per_second"] = Available(network.DownBytesPerSecond, "network_interface"),
+            ["network.up_bytes_per_second"] = Available(network.UpBytesPerSecond, "network_interface"),
+            ["health.uptime_seconds"] = new(true, "environment", null),
+            ["health.undervoltage"] = Unsupported("unsupported_os"),
+            ["health.throttled"] = Unsupported("unsupported_os"),
+            ["device.power_w"] = Unsupported("unsupported_platform"),
+        };
+    }
+
+    private static MetricCapability Available(object? value, string source) =>
+        value is null ? Unsupported("sensor_not_found") : new(true, source, null);
+
+    private static MetricCapability Unsupported(string reason) => new(false, null, reason);
+
     public TelemetrySample Collect(AgentConfig config)
     {
         var errors = new List<string>();
@@ -85,7 +124,8 @@ public sealed class HardwareCollector : IDisposable
             storage,
             network,
             new HealthMetrics(Math.Max(0, Environment.TickCount64 / 1000), null, null),
-            new CollectorMetrics("0.2.0", errors));
+            Capabilities(cpu, memory, gpu, storage, network),
+            new CollectorMetrics("0.3.0", errors));
     }
 
     public void Dispose() => _computer.Close();
