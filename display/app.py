@@ -189,6 +189,8 @@ async def run(config: dict) -> None:
                                 completed_action = transition.completed_action
                             assert transition.effect is UiEffect.NONE
                             if state.screen == Screen.POWER_PENDING:
+                                recognizer.consume_current_press()
+                                gesture = None
                                 pressed_action = None
                                 feedback_pending = False
                         else:

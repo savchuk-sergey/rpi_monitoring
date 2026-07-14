@@ -1399,10 +1399,11 @@ class UiStateTests(unittest.TestCase):
             self.assertFalse(tick.changed)
         self.assertLess(power_hold_progress(started.state, 11.49, 1.5), 1.0)
         completed = reduce_ui(started.state, PowerHoldTick(11.5), context(hold=1.5))
-        self.assertEqual((Screen.POWER_PENDING, PowerAction.REBOOT, None, "power_confirmed"), (
+        self.assertEqual((Screen.POWER_PENDING, PowerAction.REBOOT, None, 11.5, "power_confirmed"), (
             completed.state.screen,
             completed.state.pending_power_action,
             completed.state.confirmation_started_at,
+            completed.state.last_interaction_at,
             completed.completed_action,
         ))
         second_tick = reduce_ui(completed.state, PowerHoldTick(12), context(hold=1.5))
@@ -1472,6 +1473,44 @@ class UiStateTests(unittest.TestCase):
             back.state.screen, back.state.pending_power_action, back.completed_action
         ))
         self.assertFalse(reduce_ui(pending, PowerHoldReleased(21), context(nodes)).changed)
+
+    def test_phase_8_pending_timeout_starts_at_hold_completion(self) -> None:
+        confirmation = UiState(
+            screen=Screen.POWER_CONFIRM,
+            pending_power_action=PowerAction.POWEROFF,
+        )
+        started = reduce_ui(
+            confirmation,
+            PowerHoldStarted(0),
+            context(menu=15, hold=20),
+        )
+        completed = reduce_ui(
+            started.state,
+            PowerHoldTick(20),
+            context(menu=15, hold=20),
+        )
+        released = reduce_ui(
+            completed.state,
+            PowerHoldReleased(20.05),
+            context(menu=15, hold=20),
+        )
+        active = reduce_ui(
+            released.state,
+            InactivityTick(20.1, False),
+            context(menu=15, hold=20),
+        )
+
+        self.assertEqual(20, completed.state.last_interaction_at)
+        self.assertFalse(released.changed)
+        self.assertEqual(
+            (Screen.POWER_PENDING, PowerAction.POWEROFF, None),
+            (
+                active.state.screen,
+                active.state.pending_power_action,
+                active.completed_action,
+            ),
+        )
+        self.assertIs(UiEffect.NONE, completed.effect)
 
     def test_all_events_have_no_effect_and_power_error_remains_unreachable(self) -> None:
         value = node()

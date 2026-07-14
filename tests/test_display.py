@@ -103,9 +103,12 @@ from display.renderer import (
 from display.ui_state import (
     DataRefreshed,
     PowerAction,
+    PowerHoldStarted,
+    PowerHoldTick,
     ShortPress,
     Screen,
     UiContext,
+    UiEffect,
     UiState,
     reduce_ui,
     visible_action_at,
@@ -2399,6 +2402,8 @@ class DisplayTests(unittest.TestCase):
         self.assertIn("PowerHoldTick(now)", app_source)
         self.assertIn("PowerHoldCancelled(now)", app_source)
         self.assertIn("PowerHoldReleased(now)", app_source)
+        self.assertIn("recognizer.consume_current_press()", app_source)
+        self.assertIn("gesture = None", app_source)
         self.assertIn("interaction_now=now", app_source)
         self.assertIn("power_confirm_hold_seconds=power_confirm_hold_seconds", app_source)
         self.assertIn("power_hold_progress(", app_source)
@@ -2410,6 +2415,45 @@ class DisplayTests(unittest.TestCase):
         hub_source = Path("hub/app.py").read_text()
         self.assertNotIn('"/api/v1/power', hub_source)
         self.assertNotIn('"/power', hub_source)
+
+    def test_completed_fast_power_hold_consumes_release_at_every_hold_coordinate(self) -> None:
+        for point in ((216, 210), (150, 210), (300, 210)):
+            with self.subTest(point=point):
+                recognizer = TouchRecognizer(
+                    long_press_seconds=0.65,
+                    minimum_short_press_seconds=0.05,
+                )
+                state = UiState(
+                    screen=Screen.POWER_CONFIRM,
+                    pending_power_action=PowerAction.REBOOT,
+                )
+                self.assertIsNone(recognizer.update(True, *point, 0.0))
+                started = reduce_ui(
+                    state,
+                    PowerHoldStarted(0.0),
+                    UiContext((), 0, 0, 15, 0, 0.2),
+                )
+                self.assertIsNone(recognizer.update(True, *point, 0.2))
+                completed = reduce_ui(
+                    started.state,
+                    PowerHoldTick(0.2),
+                    UiContext((), 0, 0, 15, 0, 0.2),
+                )
+                recognizer.consume_current_press()
+
+                self.assertEqual(GestureState.WAIT_RELEASE, recognizer.state)
+                self.assertIsNone(recognizer.update(False, now=0.21))
+                self.assertEqual(
+                    (Screen.POWER_PENDING, PowerAction.REBOOT, "power_confirmed"),
+                    (
+                        completed.state.screen,
+                        completed.state.pending_power_action,
+                        completed.completed_action,
+                    ),
+                )
+                self.assertIs(UiEffect.NONE, completed.effect)
+                self.assertIsNone(recognizer.update(True, *point, 0.22))
+                self.assertEqual(GestureState.IDLE, recognizer.state)
 
     def test_phase_8_application_rejects_non_positive_hold_duration(self) -> None:
         for value in (0, -1):

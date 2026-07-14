@@ -79,6 +79,10 @@ class TouchRecognizer:
             return TouchGesture(GestureKind.LONG, *current, duration)
         return None
 
+    def consume_current_press(self) -> None:
+        if self.state in {GestureState.PRESSED, GestureState.LONG_EMITTED}:
+            self.state = GestureState.WAIT_RELEASE
+
     @property
     def position(self) -> tuple[int, int]:
         return (

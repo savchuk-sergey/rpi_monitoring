@@ -353,6 +353,7 @@ def reduce_ui(
             return UiTransition(next_state)
         next_state.screen = Screen.POWER_PENDING
         next_state.confirmation_started_at = None
+        next_state.last_interaction_at = event.now
         return UiTransition(
             next_state,
             changed=True,
