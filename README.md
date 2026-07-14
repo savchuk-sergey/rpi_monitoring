@@ -93,14 +93,55 @@ The Pi command installs or updates the hub, display, and its local Linux agent:
 ```
 
 Use `-DryRun` to perform only SSH, hardware, dependency, and sudo preflight.
-The real deployment checks all three systemd services plus both hub endpoints
-and removes its remote staging directory even when installation fails.
+Power actions are disabled by default. Add `-EnablePowerActions` only after a
+disabled deployment and its non-destructive probes pass. The real deployment
+checks all three services, the local power socket, and both hub endpoints, and
+removes its remote staging directory even when installation fails.
+
+### Local privileged power helper
+
+The display and Hub remain unprivileged. Restart and shutdown use only the
+root-owned Unix socket `/run/homelab-resource-monitor/power.sock`; there is no
+remote power API. `homelab-resource-monitor-power.socket` accepts local
+connections for the `homelab-monitor-display` group and starts one short-lived
+root `homelab-resource-monitor-power@.service` instance per connection. The
+helper checks Linux peer credentials, accepts only the exact local `reboot` or
+`poweroff` request, executes fixed `systemctl` argv without a shell or retry,
+then exits.
+
+Safe dry run:
+
+```powershell
+.\scripts\deploy-pi.ps1 `
+  -HostName 192.168.31.94 `
+  -UserName deploy `
+  -CalibrationFile .\touch-calibration.json `
+  -DryRun
+```
+
+Safe disabled deployment is the same command without `-DryRun`. It installs
+the socket with power UI actions disabled, sends only an invalid request as the
+display user and requires rejection, then proves the Hub user cannot connect.
+It never sends a valid power action. After those checks pass, enable the UI:
+
+```powershell
+.\scripts\deploy-pi.ps1 `
+  -HostName 192.168.31.94 `
+  -UserName deploy `
+  -CalibrationFile .\touch-calibration.json `
+  -EnablePowerActions
+```
+
+Do not complete a confirmation hold during initial UI checks. A real reboot
+requires a separately authorized operator test. Shutdown requires separate
+authorization and physical or external power restoration; repository tests
+and deployment probes do not validate either real action.
 
 To inspect the Pi:
 
 ```powershell
-ssh deploy@192.168.31.94 "sudo systemctl status homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service"
-ssh deploy@192.168.31.94 "sudo journalctl -n 100 -u homelab-resource-monitor-hub.service -u homelab-resource-monitor-display.service -u homelab-resource-monitor-linux-agent.service"
+ssh deploy@192.168.31.94 "sudo systemctl status homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service homelab-resource-monitor-power.socket"
+ssh deploy@192.168.31.94 "sudo journalctl -n 100 -u homelab-resource-monitor-display.service -u 'homelab-resource-monitor-power@*.service'"
 ssh deploy@192.168.31.94 "curl -fsS http://127.0.0.1:8765/healthz; curl -fsS http://127.0.0.1:8766/api/v1/state"
 ```
 
@@ -108,7 +149,7 @@ Full removal is deliberately explicit because it deletes calibration and hub
 tokens:
 
 ```powershell
-ssh deploy@192.168.31.94 "sudo systemctl disable --now homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service; sudo rm -f /etc/systemd/system/homelab-resource-monitor-hub.service /etc/systemd/system/homelab-resource-monitor-display.service /etc/systemd/system/homelab-resource-monitor-linux-agent.service; sudo systemctl daemon-reload; sudo rm -rf /opt/homelab-resource-monitor /etc/homelab-resource-monitor /var/lib/homelab-resource-monitor"
+ssh deploy@192.168.31.94 "sudo systemctl disable --now homelab-resource-monitor-power.socket homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service; sudo rm -f /etc/systemd/system/homelab-resource-monitor-power.socket /etc/systemd/system/homelab-resource-monitor-power@.service /etc/systemd/system/homelab-resource-monitor-hub.service /etc/systemd/system/homelab-resource-monitor-display.service /etc/systemd/system/homelab-resource-monitor-linux-agent.service; sudo systemctl daemon-reload; sudo rm -rf /opt/homelab-resource-monitor /etc/homelab-resource-monitor /var/lib/homelab-resource-monitor"
 ```
 
 ### Linux agent over SSH

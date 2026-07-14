@@ -19,6 +19,7 @@ class PowerClientTests(unittest.IsolatedAsyncioTestCase):
         reader.readline = AsyncMock(return_value=response)
         reader.read = AsyncMock(return_value=trailing)
         writer = Mock()
+        writer.can_write_eof.return_value = True
         writer.drain = AsyncMock()
         writer.wait_closed = AsyncMock()
         return reader, writer
@@ -80,6 +81,68 @@ class PowerClientTests(unittest.IsolatedAsyncioTestCase):
                 DEFAULT_POWER_SOCKET,
                 limit=POWER_RESPONSE_LIMIT_BYTES,
             )
+
+
+    async def test_unsupported_half_close_returns_io_error_and_closes(self) -> None:
+        reader, writer = self._stream()
+        writer.can_write_eof.return_value = False
+        connect = AsyncMock(return_value=(reader, writer))
+        with patch(
+            "display.power_client.asyncio.open_unix_connection",
+            new=connect,
+            create=True,
+        ):
+            result = await request_power_action(
+                DEFAULT_POWER_SOCKET,
+                PowerAction.REBOOT,
+            )
+        self.assertEqual(PowerRequestError.IO_ERROR, result.error)
+        writer.drain.assert_awaited_once()
+        writer.write_eof.assert_not_called()
+        reader.readline.assert_not_awaited()
+        writer.close.assert_called_once()
+        writer.wait_closed.assert_awaited_once()
+        connect.assert_awaited_once()
+
+    async def test_request_is_drained_and_half_closed_before_response_read(self) -> None:
+        reader, writer = self._stream()
+        events = []
+        writer.write.side_effect = lambda payload: events.append("write")
+
+        async def drain():
+            events.append("drain")
+
+        def write_eof():
+            events.append("write_eof")
+
+        async def readline():
+            events.append("readline")
+            return b"accepted\n"
+
+        async def read(size):
+            events.append("read")
+            return b""
+
+        writer.drain.side_effect = drain
+        writer.write_eof.side_effect = write_eof
+        reader.readline.side_effect = readline
+        reader.read.side_effect = read
+        with patch(
+            "display.power_client.asyncio.open_unix_connection",
+            new=AsyncMock(return_value=(reader, writer)),
+            create=True,
+        ):
+            result = await request_power_action(
+                DEFAULT_POWER_SOCKET,
+                PowerAction.POWEROFF,
+            )
+        self.assertTrue(result.accepted)
+        self.assertEqual(
+            ["write", "drain", "write_eof", "readline", "read"],
+            events,
+        )
+        writer.can_write_eof.assert_called_once_with()
+        writer.write_eof.assert_called_once_with()
 
     async def test_only_exact_accepted_response_succeeds(self) -> None:
         responses = (

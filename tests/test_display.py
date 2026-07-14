@@ -2524,15 +2524,25 @@ class DisplayTests(unittest.TestCase):
         self.assertIn("interaction_now=now", app_source)
         self.assertIn("power_confirm_hold_seconds=power_confirm_hold_seconds", app_source)
         self.assertIn("power_hold_progress(", app_source)
-        display_source = "\n".join(
-            path.read_text() for path in Path("display").glob("*.py")
+        unprivileged_display_source = "\n".join(
+            path.read_text()
+            for path in Path("display").glob("*.py")
+            if path.name != "power_helper.py"
         )
         self.assertIn("request_power_action(", app_source)
         self.assertIn("PowerRequestAccepted", app_source)
         self.assertIn("PowerRequestFailed", app_source)
         self.assertIn("power_actions_enabled must be a boolean", app_source)
-        for forbidden in ("subprocess", "os.system", "systemctl", "AF_UNIX"):
-            self.assertNotIn(forbidden, display_source)
+        for forbidden in (
+            "subprocess",
+            "os.system",
+            "systemctl",
+            "AF_UNIX",
+        ):
+            self.assertNotIn(
+                forbidden,
+                unprivileged_display_source,
+            )
         hub_source = Path("hub/app.py").read_text()
         self.assertNotIn('"/api/v1/power', hub_source)
         self.assertNotIn('"/power', hub_source)

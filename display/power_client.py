@@ -62,6 +62,12 @@ async def request_power_action(
                 )
                 writer.write(_ACTION_PAYLOADS[action])
                 await writer.drain()
+                if not writer.can_write_eof():
+                    return PowerClientResult(
+                        accepted=False,
+                        error=PowerRequestError.IO_ERROR,
+                    )
+                writer.write_eof()
                 try:
                     response = await reader.readline()
                 except (ValueError, asyncio.LimitOverrunError):

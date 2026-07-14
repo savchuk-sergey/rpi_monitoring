@@ -1,0 +1,26 @@
+[Unit]
+Description=Homelab Resource Monitor local power helper connection %I
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=/opt/homelab-resource-monitor/.venv/bin/python -m display.power_helper
+WorkingDirectory=/opt/homelab-resource-monitor
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+TimeoutStartSec=5s
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes

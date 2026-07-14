@@ -1,0 +1,15 @@
+[Unit]
+Description=Homelab Resource Monitor local power socket
+
+[Socket]
+ListenStream=/run/homelab-resource-monitor/power.sock
+SocketUser=root
+SocketGroup=homelab-monitor-display
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=yes
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target
