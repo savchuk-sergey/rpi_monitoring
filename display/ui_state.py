@@ -2,8 +2,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
-from display.categories import can_open_graph, category, category_at, default_category, detail_view_at, metric_at
-from display.navigation import move, selected_index, touch_action, values_action_at
+from display.categories import can_open_graph, category, category_at, default_category
+from display.navigation import graph_action_at, move, selected_index, touch_action, values_action_at
 
 
 class Screen(Enum):
@@ -130,6 +130,8 @@ def visible_action_at(
     x: int,
     y: int,
 ) -> str | None:
+    if state.screen == Screen.GRAPH:
+        return graph_action_at(x, y)
     footer_action = touch_action(x, y)
     if footer_action is not None:
         return footer_action
@@ -139,6 +141,26 @@ def visible_action_at(
     if not can_open_graph(category_id):
         return None
     return values_action_at(x, y)
+
+
+def _select_graph_metric(
+    state: UiState,
+    node: dict[str, Any],
+    delta: int,
+) -> UiState:
+    next_state = replace(state, metric_by_category=dict(state.metric_by_category))
+    category_id = state.category_id(node)
+    selected_category = category(category_id)
+    metrics = selected_category.chart_metrics
+    if not can_open_graph(category_id) or len(metrics) < 2:
+        return next_state
+    current_metric_id = state.metric_id(node)
+    index = next(
+        (index for index, metric in enumerate(metrics) if metric.id == current_metric_id),
+        0,
+    )
+    next_state.metric_by_category[category_id] = metrics[(index + delta) % len(metrics)].id
+    return next_state
 
 
 def _select_node(
@@ -162,6 +184,8 @@ def _select_node(
         metric_id = next_state.metric_id(node)
         if metric_id:
             next_state.metric_by_category[category_id] = metric_id
+        if next_state.screen == Screen.GRAPH and not can_open_graph(category_id):
+            next_state.screen = Screen.VALUES
     return next_state
 
 
@@ -186,6 +210,9 @@ def reduce_ui(
             if selected.id != state.selected_category_id or not selected.available(event.nodes[index]):
                 next_state.screen = Screen.OVERVIEW
                 return UiTransition(next_state, changed=True, full_refresh=True)
+            if state.screen == Screen.GRAPH and not can_open_graph(next_state.category_id(event.nodes[index])):
+                next_state.screen = Screen.VALUES
+                return UiTransition(next_state, changed=True, full_refresh=True)
         return UiTransition(next_state)
 
     if isinstance(event, (ShortPress, LongPress)):
@@ -202,11 +229,11 @@ def reduce_ui(
         action = visible_action_at(state, node, event.x, event.y)
 
         if isinstance(event, LongPress):
-            if action == "center" and state.screen in {
-                Screen.OVERVIEW,
-                Screen.VALUES,
-                Screen.GRAPH,
-            }:
+            if (
+                action == "center" and state.screen in {Screen.OVERVIEW, Screen.VALUES}
+            ) or (
+                action == "graph_values" and state.screen == Screen.GRAPH
+            ):
                 next_state.screen = Screen.MAIN_MENU
                 return UiTransition(
                     next_state,
@@ -232,6 +259,39 @@ def reduce_ui(
                     completed_action=action,
                 )
             return UiTransition(next_state)
+
+        if state.screen == Screen.GRAPH and action in {
+            "graph_previous_metric",
+            "graph_next_metric",
+        }:
+            if node is None:
+                return UiTransition(next_state)
+            selected_state = _select_graph_metric(
+                next_state,
+                node,
+                -1 if action == "graph_previous_metric" else 1,
+            )
+            if selected_state.metric_by_category == next_state.metric_by_category:
+                return UiTransition(next_state)
+            return UiTransition(
+                selected_state,
+                changed=True,
+                full_refresh=True,
+                completed_action=(
+                    "previous_metric"
+                    if action == "graph_previous_metric"
+                    else "next_metric"
+                ),
+            )
+
+        if state.screen == Screen.GRAPH and action == "graph_values":
+            next_state.screen = Screen.VALUES
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action="graph_values",
+            )
 
         if action == "open_graph":
             next_state.screen = Screen.GRAPH
@@ -264,7 +324,7 @@ def reduce_ui(
                     full_refresh=True,
                     completed_action="short_center",
                 )
-            if state.screen in {Screen.VALUES, Screen.GRAPH}:
+            if state.screen == Screen.VALUES:
                 next_state.screen = Screen.OVERVIEW
                 return UiTransition(
                     next_state,
@@ -299,31 +359,6 @@ def reduce_ui(
         if state.screen == Screen.VALUES:
             return UiTransition(next_state)
 
-        if state.screen == Screen.GRAPH and context.nodes:
-            selected_view = detail_view_at(event.x, event.y)
-            if selected_view:
-                next_state.screen = Screen(selected_view)
-                return UiTransition(
-                    next_state,
-                    changed=True,
-                    full_refresh=True,
-                    completed_action=f"view_{selected_view}",
-                )
-            index = selected_index(
-                context.nodes,
-                state.selected_node_id,
-                state.node_index_hint,
-            )
-            node = context.nodes[index]
-            category_id = next_state.category_id(node)
-            selected_metric = metric_at(category_id, event.x, event.y)
-            if selected_metric:
-                next_state.metric_by_category[category_id] = selected_metric.id
-                return UiTransition(
-                    next_state,
-                    changed=True,
-                    completed_action=f"metric_{selected_metric.id}",
-                )
         return UiTransition(next_state)
 
     if isinstance(event, InactivityTick):

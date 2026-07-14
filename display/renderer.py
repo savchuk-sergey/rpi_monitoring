@@ -19,7 +19,12 @@ from display.formatting import (
     uptime as _format_uptime,
 )
 from display.history import HistoryStore, Sample
-from display.navigation import VALUES_GRAPH_BUTTON_RECT
+from display.navigation import (
+    GRAPH_NEXT_METRIC_HITBOX,
+    GRAPH_PREVIOUS_METRIC_HITBOX,
+    GRAPH_VALUES_HITBOX,
+    VALUES_GRAPH_BUTTON_RECT,
+)
 from display.ui_state import Screen, UiState
 
 
@@ -33,6 +38,16 @@ AMBER = "#ffb84d"
 FONT_PATH = Path(__file__).with_name("assets") / "ShareTechMono-Regular.ttf"
 HEADER_BOTTOM = 40
 FOOTER_TOP = 192
+GRAPH_HEADER_BOTTOM = 28
+GRAPH_PLOT_RECT = (20, 28, 312, 184)
+GRAPH_GRID_RECT = (42, 32, 312, 162)
+GRAPH_SUMMARY_Y = 178
+GRAPH_STATUS_DOT = (6, 10, 12, 16)
+GRAPH_IDENTITY_POSITION = (16, 14)
+GRAPH_IDENTITY_WIDTH = 112
+GRAPH_TITLE_POSITION = (186, 14)
+GRAPH_TITLE_WIDTH = 118
+GRAPH_META_POSITION = (310, 14)
 
 
 def render(
@@ -64,9 +79,50 @@ def render(
     age = _age(node.get("received_at_utc") or node.get("timestamp_utc"), now)
     if state.screen == Screen.MAIN_MENU:
         _menu(draw, fonts, node, state)
-    elif state.screen in {Screen.VALUES, Screen.GRAPH}:
+    elif state.screen == Screen.VALUES:
         _detail_header(draw, fonts, node, position, state, status_color, age)
-        _details(draw, fonts, node, state, history, age, now, pressed_action)
+        _details(draw, fonts, node, state, age, pressed_action)
+    elif state.screen == Screen.GRAPH:
+        category_id = state.category_id(node)
+        if not can_open_graph(category_id):
+            _detail_header(draw, fonts, node, position, state, status_color, age)
+            _values_detail(draw, fonts, node, state, age)
+            _footer(draw, fonts, Screen.VALUES, pressed_action)
+            return image
+        selected_category = category(category_id)
+        metrics = selected_category.chart_metrics
+        selected_metric_id = state.metric_id(node)
+        selected_metric = next(
+            (metric for metric in metrics if metric.id == selected_metric_id),
+            metrics[0],
+        )
+        _graph_header(
+            draw,
+            fonts,
+            node,
+            position,
+            selected_category.title,
+            selected_metric.title,
+            status,
+            status_color,
+            age,
+        )
+        samples = (
+            history.series(node["node_id"], category_id, selected_metric.id)
+            if history
+            else ()
+        )
+        _chart(
+            draw,
+            fonts,
+            samples,
+            selected_metric,
+            selected_metric.value(node, state.selected_gpu_index),
+            now,
+            history.window_seconds if history else 300,
+        )
+        _graph_footer(draw, fonts, metrics, selected_metric.id, pressed_action)
+        return image
     elif state.screen == Screen.OVERVIEW:
         _header(draw, fonts, node, position, status, status_color, age)
         cpu = node.get("cpu", {})
@@ -131,70 +187,13 @@ def _details(
     fonts: dict[str, Any],
     node: dict[str, Any],
     state: UiState,
-    history: HistoryStore | None,
     age: str,
-    now: datetime | None,
     pressed_action: str | None,
 ) -> None:
     category_id = state.category_id(node)
-    selected_category = category(category_id)
-    if category_id == "health":
-        _values_detail(draw, fonts, node, state, age)
-        return
-    if state.screen == Screen.VALUES:
-        _values_detail(draw, fonts, node, state, age)
-        if can_open_graph(category_id):
-            _open_graph_action(draw, fonts, pressed_action == "open_graph")
-        return
-    metrics = selected_category.chart_metrics
-    selected_metric_id = state.metric_id(node)
-    selected_metric = next(
-        (metric for metric in metrics if metric.id == selected_metric_id),
-        metrics[0],
-    )
-    for index, metric in enumerate(metrics):
-        left = round(index * 320 / len(metrics))
-        right = round((index + 1) * 320 / len(metrics))
-        selected = metric.id == selected_metric.id
-        color = BRIGHT if selected else (
-            GREEN if metric.value(node, state.selected_gpu_index) is not None else MUTED
-        )
-        draw.text(
-            ((left + right) // 2, 43),
-            metric.title,
-            font=fonts["small"],
-            fill=color,
-            anchor="mm",
-        )
-        if selected:
-            draw.line((left + 8, 54, right - 8, 54), fill=BRIGHT, width=2)
-
-    for screen, x in ((Screen.VALUES, 80), (Screen.GRAPH, 240)):
-        selected = state.screen == screen
-        draw.text(
-            (x, 68),
-            screen.value.upper(),
-            font=fonts["small"],
-            fill=BRIGHT if selected else GREEN,
-            anchor="mm",
-        )
-        if selected:
-            draw.line((x - 48, 78, x + 48, 78), fill=BRIGHT, width=2)
-
-    samples = (
-        history.series(node["node_id"], category_id, selected_metric.id)
-        if history
-        else ()
-    )
-    _chart(
-        draw,
-        fonts,
-        samples,
-        selected_metric,
-        selected_metric.value(node, state.selected_gpu_index),
-        now,
-        history.window_seconds if history else 300,
-    )
+    _values_detail(draw, fonts, node, state, age)
+    if can_open_graph(category_id):
+        _open_graph_action(draw, fonts, pressed_action == "open_graph")
 
 
 def _open_graph_action(
@@ -279,6 +278,54 @@ def _detail_header(
     )
 
 
+def _graph_header(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    node: dict[str, Any],
+    position: tuple[int, int],
+    category_title: str,
+    metric_title: str,
+    status: str,
+    status_color: str,
+    age: str,
+) -> None:
+    draw.rectangle(GRAPH_STATUS_DOT, fill=status_color)
+    display_name = str(node.get("display_name", node["node_id"]))
+    identity = _fit(
+        draw,
+        f"{status} {display_name.upper()}",
+        fonts["small"],
+        GRAPH_IDENTITY_WIDTH,
+    )
+    draw.text(
+        GRAPH_IDENTITY_POSITION,
+        identity,
+        font=fonts["small"],
+        fill=status_color,
+        anchor="lm",
+    )
+    title = _fit(
+        draw,
+        f"{category_title} / {metric_title}",
+        fonts["detail"],
+        GRAPH_TITLE_WIDTH,
+    )
+    draw.text(
+        GRAPH_TITLE_POSITION,
+        title,
+        font=fonts["detail"],
+        fill=BRIGHT,
+        anchor="mm",
+    )
+    draw.text(
+        GRAPH_META_POSITION,
+        f"{position[0]}/{position[1]} {age}",
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="rm",
+    )
+
+
 def _menu(
     draw: ImageDraw.ImageDraw,
     fonts: dict[str, Any],
@@ -338,7 +385,7 @@ def _chart(
     now: datetime | None,
     window_seconds: int,
 ) -> None:
-    left, top, right, bottom = 28, 82, 310, 160
+    left, top, right, bottom = GRAPH_GRID_RECT
     values = [sample.value for sample in samples if sample.value is not None]
     if metric.scale.mode is ScaleMode.FIXED:
         minimum = metric.scale.minimum
@@ -362,8 +409,8 @@ def _chart(
     for threshold in metric.thresholds:
         y = round(bottom - (threshold.value - minimum) / (maximum - minimum) * (bottom - top))
         draw.line((right - 18, y, right, y), fill=threshold_colors[threshold.tone])
-    draw.text((24, top), _number(maximum), font=fonts["tiny"], fill=MUTED, anchor="rm")
-    draw.text((24, bottom), _number(minimum), font=fonts["tiny"], fill=MUTED, anchor="rm")
+    draw.text((38, top), _number(maximum), font=fonts["tiny"], fill=MUTED, anchor="rm")
+    draw.text((38, bottom), _number(minimum), font=fonts["tiny"], fill=MUTED, anchor="rm")
 
     end = (
         (now or datetime.now(timezone.utc)).timestamp()
@@ -392,15 +439,15 @@ def _chart(
         x, y = last_point
         draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=BRIGHT)
     elif not values:
-        draw.text((169, 121), "COLLECTING HISTORY", font=fonts["small"], fill=MUTED, anchor="mm")
+        draw.text((177, 97), "COLLECTING HISTORY", font=fonts["small"], fill=MUTED, anchor="mm")
 
     valid = [value for value in values]
     now_value = _format_metric(current, metric.unit)
     minimum_value = _format_metric(min(valid), metric.unit) if valid else "—"
     maximum_value = _format_metric(max(valid), metric.unit) if valid else "—"
-    draw.text((10, 177), f"NOW {now_value}", font=fonts["small"], fill=BRIGHT, anchor="lm")
-    draw.text((160, 177), f"MIN {minimum_value}", font=fonts["small"], fill=MUTED, anchor="mm")
-    draw.text((310, 177), f"MAX {maximum_value}", font=fonts["small"], fill=MUTED, anchor="rm")
+    draw.text((10, GRAPH_SUMMARY_Y), f"NOW {now_value}", font=fonts["small"], fill=BRIGHT, anchor="lm")
+    draw.text((160, GRAPH_SUMMARY_Y), f"MIN {minimum_value}", font=fonts["small"], fill=MUTED, anchor="mm")
+    draw.text((310, GRAPH_SUMMARY_Y), f"MAX {maximum_value}", font=fonts["small"], fill=MUTED, anchor="rm")
 
 
 def _format_metric(value: Any, unit: str) -> str:
@@ -490,6 +537,52 @@ def _metric_row(
         draw.line((76, top + 46, 76 + width, top + 46), fill=GREEN, width=2)
 
 
+def _graph_footer(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    metrics: tuple[ChartMetric, ...],
+    selected_metric_id: str,
+    pressed_action: str | None,
+) -> None:
+    selected_index = next(
+        (index for index, metric in enumerate(metrics) if metric.id == selected_metric_id),
+        0,
+    )
+    if len(metrics) >= 2:
+        previous_label = _fit(
+            draw,
+            f"< {metrics[(selected_index - 1) % len(metrics)].title}",
+            fonts["small"],
+            56,
+        )
+        next_label = _fit(
+            draw,
+            f"{metrics[(selected_index + 1) % len(metrics)].title} >",
+            fonts["small"],
+            56,
+        )
+    else:
+        previous_label, next_label = "<", ">"
+    buttons = (
+        ("graph_previous_metric", GRAPH_PREVIOUS_METRIC_HITBOX, previous_label),
+        ("graph_values", GRAPH_VALUES_HITBOX, "VALUES"),
+        ("graph_next_metric", GRAPH_NEXT_METRIC_HITBOX, next_label),
+    )
+    draw.line((0, 192, 319, 192), fill=MUTED)
+    for action, hitbox, label in buttons:
+        box = (hitbox[0], hitbox[1], hitbox[2] - 1, hitbox[3] - 1)
+        pressed = action == pressed_action
+        if pressed:
+            draw.rectangle(box, fill=MUTED)
+        draw.text(
+            ((box[0] + box[2]) // 2, 216),
+            label,
+            font=fonts["small"],
+            fill=BACKGROUND if pressed else GREEN,
+            anchor="mm",
+        )
+
+
 def _footer(
     draw: ImageDraw.ImageDraw,
     fonts: dict[str, Any],
@@ -500,7 +593,6 @@ def _footer(
         Screen.OVERVIEW: "HOLD: MENU",
         Screen.MAIN_MENU: "SELECT",
         Screen.VALUES: "TAP: OVERVIEW",
-        Screen.GRAPH: "TAP: OVERVIEW",
     }[screen]
     buttons = (
         ("previous", (0, FOOTER_TOP, 63, 239), "<"),

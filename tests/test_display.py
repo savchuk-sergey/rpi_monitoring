@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image, ImageChops, ImageColor, ImageDraw
+from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFont
 
 from display.drivers.ili9341 import ILI9341, rgb565
 from display.categories import CATEGORIES, category, category_at, detail_view_at, metric_at
@@ -13,12 +13,16 @@ from display.gestures import GestureKind, TouchRecognizer
 from display.history import HistoryStore
 from display.navigation import (
     FOOTER_TOP,
+    GRAPH_NEXT_METRIC_HITBOX,
+    GRAPH_PREVIOUS_METRIC_HITBOX,
+    GRAPH_VALUES_HITBOX,
     MODE_HITBOX,
     NAV_WIDTH,
     NEXT_HITBOX,
     PREVIOUS_HITBOX,
     VALUES_GRAPH_BUTTON_RECT,
     VALUES_GRAPH_HITBOX,
+    graph_action_at,
     map_touch,
     move,
     selected_index,
@@ -31,6 +35,16 @@ from display.renderer import (
     BACKGROUND,
     BRIGHT,
     GREEN,
+    GRAPH_GRID_RECT,
+    GRAPH_HEADER_BOTTOM,
+    GRAPH_IDENTITY_POSITION,
+    GRAPH_IDENTITY_WIDTH,
+    GRAPH_META_POSITION,
+    GRAPH_PLOT_RECT,
+    GRAPH_STATUS_DOT,
+    GRAPH_SUMMARY_Y,
+    GRAPH_TITLE_POSITION,
+    GRAPH_TITLE_WIDTH,
     MUTED,
     RED,
     _age,
@@ -41,6 +55,8 @@ from display.renderer import (
     _format_rate,
     _format_temperature,
     _format_uptime,
+    _fit,
+    _graph_footer,
     _number,
     _status,
     _value,
@@ -84,12 +100,26 @@ def waiting_node():
 
 
 UNCHANGED_RENDER_HASHES = {
-    "graph": "66b0364742250623eb4d2522b1ac07a168c503658b16c1f00c84e92b565311ff",
-    "graph_with_history": "b497c0beaddc5a3b04d785699cce705e5d7ea89862109cc5d7085eda29d48b8b",
     "main_menu_capabilities": "21b52b19516410dfed6b3946cbf9cc518fcf17d09c454d7728bcf237ea3db399",
     "main_menu_legacy": "a73cbc7872ebc0b018673c4409c0b0d5d2281cb7c16fc684c1f637246d9bd19b",
     "overview_legacy": "7a64eb574d9d969407dec89fbf7ab8493a748dadec645124825d6e9cef15c9d4",
     "overview_waiting": "7064e7983ea4571ed55586a2d656d493bbce9032bb44374853015a5d7faac6d4",
+}
+
+OLD_GRAPH_HASHES = {
+    "graph_fullscreen_collecting": "66b0364742250623eb4d2522b1ac07a168c503658b16c1f00c84e92b565311ff",
+    "graph_fullscreen_with_history": "b497c0beaddc5a3b04d785699cce705e5d7ea89862109cc5d7085eda29d48b8b",
+}
+
+GRAPH_RENDER_HASHES = {
+    "graph_fullscreen_collecting": "5a6c6b75269e68671019ff9099eb2e0edacb194c6673561c75f66023a9814985",
+    "graph_fullscreen_with_history": "3c0d304649dc3e32b97574cbf791b8b7551f6dc439b8142c068a581d62acbcf3",
+    "graph_fullscreen_temperature": "f98bcfbbff8fe585a6f69ab28d825be10b2f6dac947ddc865542aeccb401afa8",
+    "graph_fullscreen_dynamic_power": "31328abb060593eb5921754fdcdeaec58e9815f6dc62d3aaacf7bd6ac82dbc9c",
+    "graph_fullscreen_null_gap": "2c0cb29812212ea2af906878af6d2c1fb2c7850054a4bf48c7cccd4900f585ce",
+    "graph_footer_previous_pressed": "32179de3769e19f5af19417a64525e6890f710a3a8d84b788569781a9a50c9fe",
+    "graph_footer_values_pressed": "2f8df73989620eb2709a71abd2baa6bcb37defc5dd37aeab44664049d6fc5810",
+    "graph_footer_next_pressed": "b0bbeaad170f180a12b23b83be712bfba2a5481f4b44a014308aaccbe26b8ee4",
 }
 
 BASELINE_VALUES_HASHES = {
@@ -165,6 +195,35 @@ class DisplayTests(unittest.TestCase):
             self.assertGreaterEqual(right - left, 48)
             self.assertGreaterEqual(bottom - top, 48)
 
+    def test_graph_footer_geometry_and_boundaries_are_exact(self) -> None:
+        hitboxes = (
+            GRAPH_PREVIOUS_METRIC_HITBOX,
+            GRAPH_VALUES_HITBOX,
+            GRAPH_NEXT_METRIC_HITBOX,
+        )
+        self.assertEqual(
+            ((0, 192, 64, 240), (64, 192, 256, 240), (256, 192, 320, 240)),
+            hitboxes,
+        )
+        self.assertEqual((64, 192, 64), tuple(right - left for left, _, right, _ in hitboxes))
+        self.assertTrue(all(bottom - top >= 48 for _, top, _, bottom in hitboxes))
+        self.assertEqual(hitboxes[0][2], hitboxes[1][0])
+        self.assertEqual(hitboxes[1][2], hitboxes[2][0])
+        expected = {
+            (0, 192): "graph_previous_metric",
+            (63, 239): "graph_previous_metric",
+            (64, 192): "graph_values",
+            (255, 239): "graph_values",
+            (256, 192): "graph_next_metric",
+            (319, 239): "graph_next_metric",
+        }
+        for point, action in expected.items():
+            with self.subTest(point=point):
+                self.assertEqual(action, graph_action_at(*point))
+        for point in ((0, 191), (319, 191), (0, 240), (319, 240), (-1, 210), (320, 210)):
+            with self.subTest(point=point):
+                self.assertIsNone(graph_action_at(*point))
+
     def test_open_graph_geometry_and_boundaries_are_exact(self) -> None:
         self.assertEqual((0, 140, 320, 192), VALUES_GRAPH_HITBOX)
         self.assertEqual((8, 142, 312, 190), VALUES_GRAPH_BUTTON_RECT)
@@ -217,19 +276,6 @@ class DisplayTests(unittest.TestCase):
                 "reason": "sensor_not_found",
             },
         }
-        history = HistoryStore(window_seconds=300, max_samples=180)
-        history.add(
-            node(
-                timestamp_utc="2026-07-12T03:00:00Z",
-                cpu={"usage_percent": 20, "temperature_c": 63, "power_w": None},
-            )
-        )
-        history.add(node(timestamp_utc="2026-07-12T03:00:01Z", online=False))
-        graph_node = node(
-            timestamp_utc="2026-07-12T03:00:02Z",
-            cpu={"usage_percent": 80, "temperature_c": 63, "power_w": None},
-        )
-        history.add(graph_node)
         scenarios = {
             "overview_legacy": (node(), UiState(), None),
             "overview_waiting": (waiting_node(), UiState(), None),
@@ -238,12 +284,6 @@ class DisplayTests(unittest.TestCase):
                 node(capabilities=capabilities),
                 UiState(screen=Screen.MAIN_MENU),
                 None,
-            ),
-            "graph": (node(), UiState(screen=Screen.GRAPH), None),
-            "graph_with_history": (
-                graph_node,
-                UiState(screen=Screen.GRAPH),
-                history,
             ),
         }
         for name, (value, state, history_store) in scenarios.items():
@@ -259,6 +299,87 @@ class DisplayTests(unittest.TestCase):
                     ).tobytes()
                 ).hexdigest()
                 self.assertEqual(UNCHANGED_RENDER_HASHES[name], digest)
+
+    def test_phase_4_graph_render_hashes_are_exact(self) -> None:
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        history = HistoryStore(window_seconds=300, max_samples=180)
+        history.add(node(
+            timestamp_utc="2026-07-12T03:00:00Z",
+            cpu={"usage_percent": 20, "temperature_c": 63, "power_w": None},
+        ))
+        history.add(node(timestamp_utc="2026-07-12T03:00:01Z", online=False))
+        graph_node = node(
+            timestamp_utc="2026-07-12T03:00:02Z",
+            cpu={"usage_percent": 80, "temperature_c": 63, "power_w": None},
+        )
+        history.add(graph_node)
+
+        null_history = HistoryStore(window_seconds=300, max_samples=180)
+        for second, usage, online in (
+            (0, 20, True),
+            (1, 40, True),
+            (2, 0, False),
+            (3, 60, True),
+            (4, 80, True),
+        ):
+            null_history.add(node(
+                timestamp_utc=f"2026-07-12T03:00:0{second}Z",
+                online=online,
+                cpu={"usage_percent": usage, "temperature_c": 63, "power_w": None},
+            ))
+        null_node = node(
+            timestamp_utc="2026-07-12T03:00:04Z",
+            cpu={"usage_percent": 80, "temperature_c": 63, "power_w": None},
+        )
+        value = complete_v2_node()
+        temperature = UiState(
+            screen=Screen.GRAPH,
+            metric_by_category={"cpu": "temperature"},
+        )
+        scenarios = {
+            "graph_fullscreen_collecting": render(
+                node(), (1, 4), True, UiState(screen=Screen.GRAPH), now=now
+            ),
+            "graph_fullscreen_with_history": render(
+                graph_node,
+                (1, 4),
+                True,
+                UiState(screen=Screen.GRAPH),
+                history=history,
+                now=now,
+            ),
+            "graph_fullscreen_temperature": render(value, (1, 1), True, temperature, now=now),
+            "graph_fullscreen_dynamic_power": render(
+                value,
+                (1, 1),
+                True,
+                UiState(screen=Screen.GRAPH, metric_by_category={"cpu": "power"}),
+                now=now,
+            ),
+            "graph_fullscreen_null_gap": render(
+                null_node,
+                (1, 1),
+                True,
+                UiState(screen=Screen.GRAPH),
+                history=null_history,
+                now=datetime(2026, 7, 12, 3, 0, 4, tzinfo=timezone.utc),
+            ),
+            "graph_footer_previous_pressed": render(
+                value, (1, 1), True, temperature, pressed_action="graph_previous_metric", now=now
+            ),
+            "graph_footer_values_pressed": render(
+                value, (1, 1), True, temperature, pressed_action="graph_values", now=now
+            ),
+            "graph_footer_next_pressed": render(
+                value, (1, 1), True, temperature, pressed_action="graph_next_metric", now=now
+            ),
+        }
+        for name, image in scenarios.items():
+            with self.subTest(name=name):
+                digest = hashlib.sha256(image.tobytes()).hexdigest()
+                self.assertEqual(GRAPH_RENDER_HASHES[name], digest)
+                if name in OLD_GRAPH_HASHES:
+                    self.assertNotEqual(OLD_GRAPH_HASHES[name], digest)
 
     def test_values_render_hashes_match_phase_3_targets(self) -> None:
         value = complete_v2_node()
@@ -541,9 +662,40 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(Screen.GRAPH, graph.state.screen)
         self.assertEqual("temperature", graph.state.metric_by_category["cpu"])
         self.assertEqual("open_graph", graph.completed_action)
-        with patch("display.renderer._chart", wraps=_chart) as chart:
-            render(value, ui_state=graph.state, now=now)
+        graph_text = []
+
+        def record_graph_text(draw, xy, text, *args, **kwargs):
+            graph_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_graph_text), \
+                patch("display.renderer._chart", wraps=_chart) as chart:
+            temperature_frame = render(value, ui_state=graph.state, now=now)
         self.assertEqual("temperature", chart.call_args.args[3].id)
+        self.assertIn("CPU / TEMP", {text for _, text, _ in graph_text})
+        self.assertFalse(any(text in {"LOAD", "TEMP", "POWER", "CLOCK"} and xy[1] == 43
+                             for xy, text, _ in graph_text))
+        self.assertFalse(any(text in {"VALUES", "GRAPH"} and xy[1] == 68
+                             for xy, text, _ in graph_text))
+
+        following = reduce_ui(graph.state, ShortPress(300, 210, 4), context)
+        self.assertEqual("clock", following.state.metric_by_category["cpu"])
+        clock_text = []
+
+        def record_clock_text(draw, xy, text, *args, **kwargs):
+            clock_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_clock_text):
+            clock_frame = render(value, ui_state=following.state, now=now)
+        self.assertIn("CPU / CLOCK", {text for _, text, _ in clock_text})
+        self.assertNotEqual(temperature_frame.tobytes(), clock_frame.tobytes())
+
+        previous = reduce_ui(following.state, ShortPress(10, 210, 5), context)
+        self.assertEqual("temperature", previous.state.metric_by_category["cpu"])
+        values = reduce_ui(previous.state, ShortPress(160, 210, 6), context)
+        self.assertEqual(Screen.VALUES, values.state.screen)
+        self.assertEqual("temperature", values.state.metric_by_category["cpu"])
 
     def test_values_renderer_geometry_and_graph_controls_are_separated(self) -> None:
         value = complete_v2_node()
@@ -634,16 +786,232 @@ class DisplayTests(unittest.TestCase):
         with patch.object(ImageDraw.ImageDraw, "text", new=record_graph_text), \
                 patch.object(ImageDraw.ImageDraw, "line", new=record_graph_line):
             render(value, ui_state=UiState(screen=Screen.GRAPH), now=now)
+        self.assertFalse(any(xy[1] == 43 for xy, _, _ in graph_text_calls))
+        self.assertFalse(any(
+            xy[1] == 68 and text in {"VALUES", "GRAPH"}
+            for xy, text, _ in graph_text_calls
+        ))
+        self.assertFalse(any(
+            len(xy) == 4 and xy[1] == xy[3] and xy[1] in {54, 78}
+            for xy, _ in graph_line_calls
+        ))
+
+    def test_graph_route_header_plot_and_summary_geometry_are_exact(self) -> None:
+        self.assertEqual(28, GRAPH_HEADER_BOTTOM)
+        self.assertEqual((20, 28, 312, 184), GRAPH_PLOT_RECT)
+        self.assertEqual((42, 32, 312, 162), GRAPH_GRID_RECT)
+        self.assertEqual(178, GRAPH_SUMMARY_Y)
+        self.assertEqual((6, 10, 12, 16), GRAPH_STATUS_DOT)
+        self.assertEqual(((16, 14), 112), (GRAPH_IDENTITY_POSITION, GRAPH_IDENTITY_WIDTH))
+        self.assertEqual(((186, 14), 118), (GRAPH_TITLE_POSITION, GRAPH_TITLE_WIDTH))
+        self.assertEqual((310, 14), GRAPH_META_POSITION)
+
+        text_calls = []
+        line_calls = []
+        rectangle_calls = []
+        original_text = ImageDraw.ImageDraw.text
+        original_line = ImageDraw.ImageDraw.line
+        original_rectangle = ImageDraw.ImageDraw.rectangle
+
+        def record_text(draw, xy, text, *args, **kwargs):
+            text_calls.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        def record_line(draw, xy, *args, **kwargs):
+            line_calls.append((xy, kwargs))
+            return original_line(draw, xy, *args, **kwargs)
+
+        def record_rectangle(draw, xy, *args, **kwargs):
+            rectangle_calls.append((xy, kwargs))
+            return original_rectangle(draw, xy, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_text), \
+                patch.object(ImageDraw.ImageDraw, "line", new=record_line), \
+                patch.object(ImageDraw.ImageDraw, "rectangle", new=record_rectangle), \
+                patch("display.renderer._detail_header") as detail_header, \
+                patch("display.renderer._values_detail") as values_detail, \
+                patch("display.renderer._open_graph_action") as open_graph, \
+                patch("display.renderer._footer") as standard_footer, \
+                patch("display.renderer._fit", wraps=_fit) as fit:
+            render(
+                node(),
+                (1, 4),
+                True,
+                UiState(screen=Screen.GRAPH),
+                now=datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc),
+            )
+        detail_header.assert_not_called()
+        values_detail.assert_not_called()
+        open_graph.assert_not_called()
+        standard_footer.assert_not_called()
+        self.assertIn((GRAPH_STATUS_DOT, {"fill": GREEN}), rectangle_calls)
+        identity = next(call for call in text_calls if call[0] == GRAPH_IDENTITY_POSITION)
+        self.assertIn("ONLINE", identity[1])
+        self.assertEqual((GREEN, "lm", 13), (
+            identity[2]["fill"], identity[2]["anchor"], identity[2]["font"].size
+        ))
+        title = next(call for call in text_calls if call[0] == GRAPH_TITLE_POSITION)
+        self.assertEqual(("CPU / LOAD", BRIGHT, "mm", 15), (
+            title[1], title[2]["fill"], title[2]["anchor"], title[2]["font"].size
+        ))
+        meta = next(call for call in text_calls if call[0] == GRAPH_META_POSITION)
+        self.assertEqual(("1/4 2s", MUTED, "rm"), (
+            meta[1], meta[2]["fill"], meta[2]["anchor"]
+        ))
+        self.assertTrue({112, 118, 56}.issubset({call.args[3] for call in fit.call_args_list}))
+        for y in (32, 97, 162):
+            self.assertIn(((42, y, 312, y), {"fill": MUTED}), line_calls)
+        self.assertIn(((294, 58, 312, 58), {"fill": AMBER}), line_calls)
+        self.assertIn(((294, 38, 312, 38), {"fill": RED}), line_calls)
+        self.assertIn((38, 32), {xy for xy, _, _ in text_calls})
+        self.assertIn((38, 162), {xy for xy, _, _ in text_calls})
+        self.assertIn((177, 97), {xy for xy, _, _ in text_calls})
         self.assertEqual(
-            {metric.title for metric in category("cpu").chart_metrics},
-            {text for xy, text, _ in graph_text_calls if xy[1] == 43},
+            {(10, 178), (160, 178), (310, 178)},
+            {xy for xy, text, _ in text_calls if text.startswith(("NOW ", "MIN ", "MAX "))},
         )
-        self.assertEqual(
-            {"VALUES", "GRAPH"},
-            {text for xy, text, _ in graph_text_calls if xy[1] == 68},
+
+    def test_invalid_graph_category_renders_values_safely(self) -> None:
+        value = complete_v2_node()
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        graph_health = render(
+            value,
+            (1, 1),
+            True,
+            UiState(screen=Screen.GRAPH, selected_category_id="health"),
+            now=now,
         )
-        self.assertTrue(any(xy[1] == xy[3] == 54 for xy, _ in graph_line_calls if len(xy) == 4))
-        self.assertTrue(any(xy[1] == xy[3] == 78 for xy, _ in graph_line_calls if len(xy) == 4))
+        values_health = render(
+            value,
+            (1, 1),
+            True,
+            UiState(screen=Screen.VALUES, selected_category_id="health"),
+            now=now,
+        )
+        self.assertEqual(values_health.tobytes(), graph_health.tobytes())
+        self.assertEqual(VALUES_RENDER_HASHES["health"], hashlib.sha256(graph_health.tobytes()).hexdigest())
+
+    def test_graph_footer_labels_wrap_fit_and_pressed_feedback(self) -> None:
+        value = complete_v2_node()
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        original_text = ImageDraw.ImageDraw.text
+        expected_labels = {
+            "temperature": ("< LOAD", "VALUES", "CLOCK >"),
+            "load": ("< PWR", "VALUES", "TEMP >"),
+            "power": ("< CLOCK", "VALUES", "LOAD >"),
+        }
+        for metric_id, expected in expected_labels.items():
+            text_calls = []
+
+            def record_text(draw, xy, text, *args, **kwargs):
+                text_calls.append((xy, text, kwargs))
+                return original_text(draw, xy, text, *args, **kwargs)
+
+            with self.subTest(metric=metric_id), \
+                    patch.object(ImageDraw.ImageDraw, "text", new=record_text), \
+                    patch("display.renderer._fit", wraps=_fit) as fit:
+                render(
+                    value,
+                    ui_state=UiState(
+                        screen=Screen.GRAPH,
+                        metric_by_category={"cpu": metric_id},
+                    ),
+                    now=now,
+                )
+            footer = tuple(text for xy, text, _ in text_calls if xy[1] == 216)
+            self.assertEqual(expected, footer)
+            self.assertEqual(2, sum(call.args[3] == 56 for call in fit.call_args_list))
+
+        image = Image.new("RGB", (320, 240), BACKGROUND)
+        draw = ImageDraw.Draw(image)
+        fonts = {"small": ImageFont.truetype(FONT_PATH, 13)}
+        one_metric_text = []
+
+        def record_one_metric_text(draw, xy, text, *args, **kwargs):
+            one_metric_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_one_metric_text):
+            _graph_footer(draw, fonts, category("network").chart_metrics[:1], "down", None)
+        self.assertEqual(("<", "VALUES", ">"), tuple(
+            text for xy, text, _ in one_metric_text if xy[1] == 216
+        ))
+
+        normal = render(
+            value,
+            ui_state=UiState(screen=Screen.GRAPH, metric_by_category={"cpu": "temperature"}),
+            now=now,
+        )
+        hitboxes = {
+            "graph_previous_metric": GRAPH_PREVIOUS_METRIC_HITBOX,
+            "graph_values": GRAPH_VALUES_HITBOX,
+            "graph_next_metric": GRAPH_NEXT_METRIC_HITBOX,
+        }
+        for action, hitbox in hitboxes.items():
+            with self.subTest(action=action):
+                pressed_text = []
+
+                def record_pressed_text(draw, xy, text, *args, **kwargs):
+                    pressed_text.append((xy, text, kwargs))
+                    return original_text(draw, xy, text, *args, **kwargs)
+
+                with patch.object(ImageDraw.ImageDraw, "text", new=record_pressed_text):
+                    pressed = render(
+                        value,
+                        ui_state=UiState(
+                            screen=Screen.GRAPH,
+                            metric_by_category={"cpu": "temperature"},
+                        ),
+                        pressed_action=action,
+                        now=now,
+                    )
+                difference = ImageChops.difference(normal, pressed).getbbox()
+                self.assertIsNotNone(difference)
+                self.assertGreaterEqual(difference[0], hitbox[0])
+                self.assertGreaterEqual(difference[1], hitbox[1])
+                self.assertLessEqual(difference[2], hitbox[2])
+                self.assertLessEqual(difference[3], hitbox[3])
+                self.assertEqual(ImageColor.getrgb(MUTED), pressed.getpixel((hitbox[0] + 2, 200)))
+                pressed_labels = [
+                    kwargs for xy, _, kwargs in pressed_text
+                    if xy[1] == 216 and kwargs.get("fill") == BACKGROUND
+                ]
+                self.assertEqual(1, len(pressed_labels))
+
+    def test_graph_null_gap_is_not_bridged(self) -> None:
+        history = HistoryStore(window_seconds=300, max_samples=180)
+        for second, usage, online in (
+            (0, 20, True),
+            (1, 40, True),
+            (2, 0, False),
+            (3, 60, True),
+            (4, 80, True),
+        ):
+            history.add(node(
+                timestamp_utc=f"2026-07-12T03:00:0{second}Z",
+                online=online,
+                cpu={"usage_percent": usage, "temperature_c": 63, "power_w": None},
+            ))
+        segments = []
+        original_line = ImageDraw.ImageDraw.line
+
+        def record_line(draw, xy, *args, **kwargs):
+            if isinstance(xy, list) and kwargs.get("fill") == GREEN and kwargs.get("width") == 2:
+                segments.append(tuple(xy))
+            return original_line(draw, xy, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "line", new=record_line):
+            render(
+                node(
+                    timestamp_utc="2026-07-12T03:00:04Z",
+                    cpu={"usage_percent": 80, "temperature_c": 63, "power_w": None},
+                ),
+                ui_state=UiState(screen=Screen.GRAPH),
+                history=history,
+                now=datetime(2026, 7, 12, 3, 0, 4, tzinfo=timezone.utc),
+            )
+        self.assertEqual(2, len(segments))
+        self.assertLess(segments[0][-1][0], segments[1][0][0])
 
     def test_open_graph_pressed_feedback_is_exact_and_localized(self) -> None:
         value = complete_v2_node()
@@ -715,8 +1083,8 @@ class DisplayTests(unittest.TestCase):
                 history=history,
                 now=datetime(2026, 7, 12, 3, 0, 42, tzinfo=timezone.utc),
             )
-        self.assertEqual([28, 310], [points[0][0], points[-1][0]])
-        self.assertTrue(all(28 <= x <= 310 and 82 <= y <= 160 for x, y in points))
+        self.assertEqual([42, 312], [points[0][0], points[-1][0]])
+        self.assertTrue(all(42 <= x <= 312 and 32 <= y <= 162 for x, y in points))
 
     def test_v2_values_and_history_use_extended_metrics(self) -> None:
         value = node(
