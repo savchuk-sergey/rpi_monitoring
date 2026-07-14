@@ -22,6 +22,7 @@ class PowerDeploymentTests(unittest.TestCase):
             ),
         )
         for directive in (
+            "ExecStartPre=/usr/bin/install -d -o root -g homelab-monitor-display -m 0750 /run/homelab-resource-monitor",
             "SocketUser=root",
             "SocketGroup=homelab-monitor-display",
             "SocketMode=0660",
@@ -37,6 +38,7 @@ class PowerDeploymentTests(unittest.TestCase):
 
     def test_service_template_is_socket_only_root_and_hardened(self) -> None:
         for directive in (
+            "CollectMode=inactive-or-failed",
             "Type=exec",
             "User=root",
             "Group=root",
@@ -112,6 +114,13 @@ class PowerDeploymentTests(unittest.TestCase):
             "enable --now homelab-resource-monitor-power@.service",
             self.installer,
         )
+        for check in (
+            'power_socket_dir=/run/homelab-resource-monitor',
+            '[ "$(stat -c %U "$power_socket_dir")" = root ]',
+            '[ "$(stat -c %G "$power_socket_dir")" = homelab-monitor-display ]',
+            '[ "$(stat -c %a "$power_socket_dir")" = 750 ]',
+        ):
+            self.assertIn(check, self.installer)
 
     def test_installer_uses_only_safe_socket_probes(self) -> None:
         for required in (

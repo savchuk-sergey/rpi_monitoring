@@ -1,5 +1,6 @@
 [Unit]
 Description=Homelab Resource Monitor local power helper connection %I
+CollectMode=inactive-or-failed
 
 [Service]
 Type=exec

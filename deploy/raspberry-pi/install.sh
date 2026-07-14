@@ -64,7 +64,11 @@ systemctl restart homelab-resource-monitor-linux-agent.service
 sleep 3
 curl --fail --silent http://127.0.0.1:8765/healthz >/dev/null
 systemctl --quiet is-active homelab-resource-monitor-power.socket
+power_socket_dir=/run/homelab-resource-monitor
 power_socket=/run/homelab-resource-monitor/power.sock
+[ "$(stat -c %U "$power_socket_dir")" = root ]
+[ "$(stat -c %G "$power_socket_dir")" = homelab-monitor-display ]
+[ "$(stat -c %a "$power_socket_dir")" = 750 ]
 [ -S "$power_socket" ]
 [ "$(stat -c %U "$power_socket")" = root ]
 [ "$(stat -c %G "$power_socket")" = homelab-monitor-display ]
