@@ -3,23 +3,22 @@ from typing import Any, Callable
 
 from PIL import ImageDraw
 
+from display.detail_model import (
+    ChartMetric,
+    ChartValueGetter,
+    ScaleDefinition,
+    ScaleMode,
+    Threshold,
+    ThresholdTone,
+    ValueRow,
+    ValueToneGetter,
+    ValuesLayout,
+    ValueTone,
+)
+from display.formatting import boolean, bytes_pair, clock, percent, power, rate, temperature, uptime
+
 
 Icon = Callable[[ImageDraw.ImageDraw, tuple[int, int, int, int], str], None]
-ValueGetter = Callable[[dict[str, Any], int], Any]
-
-
-@dataclass(frozen=True)
-class Metric:
-    id: str
-    title: str
-    unit: str
-    minimum: float
-    maximum: float | None
-    value: ValueGetter
-
-    @property
-    def key(self) -> str:
-        return self.id
 
 
 @dataclass(frozen=True)
@@ -28,10 +27,26 @@ class Category:
     title: str
     icon: Icon
     available: Callable[[dict[str, Any]], bool]
-    metrics: tuple[Metric, ...]
+    value_rows: tuple[ValueRow, ...]
+    values_layout: ValuesLayout
+    chart_metrics: tuple[ChartMetric, ...]
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            raise ValueError("category id must not be empty")
+        if not self.title:
+            raise ValueError("category title must not be empty")
+        if not self.value_rows:
+            raise ValueError("category value rows must not be empty")
+        if len({row.id for row in self.value_rows}) != len(self.value_rows):
+            raise ValueError("value row ids must be unique")
+        if len({metric.id for metric in self.chart_metrics}) != len(self.chart_metrics):
+            raise ValueError("chart metric ids must be unique")
+        if len(self.value_rows) > len(self.values_layout.row_y_positions):
+            raise ValueError("category layout has too few row positions")
 
 
-def _nested(*path: str) -> ValueGetter:
+def _nested(*path: str) -> ChartValueGetter:
     def get(node: dict[str, Any], _: int) -> Any:
         value: Any = node
         for part in path:
@@ -41,16 +56,34 @@ def _nested(*path: str) -> ValueGetter:
     return get
 
 
-def _gpu(field: str) -> ValueGetter:
-    def get(node: dict[str, Any], index: int) -> Any:
-        devices = node.get("gpu") or []
-        return devices[index % len(devices)].get(field) if devices else None
+def _gpu_device(node: dict[str, Any], index: int) -> dict[str, Any]:
+    devices = node.get("gpu") or []
+    return devices[index % len(devices)] if devices else {}
 
-    return get
+
+def _gpu(field: str) -> ChartValueGetter:
+    return lambda node, index: _gpu_device(node, index).get(field)
 
 
 def _errors(node: dict[str, Any], _: int) -> int:
     return len(node.get("collector", {}).get("errors") or [])
+
+
+def _collector_text(node: dict[str, Any], _: int, __: str) -> str:
+    count = _errors(node, 0)
+    return f"ERR {count}" if count else "OK"
+
+
+def _collector_tone(node: dict[str, Any], _: int, __: str) -> ValueTone:
+    return ValueTone.WARNING if _errors(node, 0) else ValueTone.NORMAL
+
+
+def _health_tone(field: str) -> ValueToneGetter:
+    return lambda node, _, __: (
+        ValueTone.CRITICAL
+        if node.get("health", {}).get(field) is True
+        else ValueTone.NORMAL
+    )
 
 
 def draw_cpu(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill: str) -> None:
@@ -102,9 +135,6 @@ def draw_health(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill:
     draw.line((left + 6, top + 18, left + 11, top + 18, left + 14, top + 12, left + 18, top + 23, left + 21, top + 18, right - 6, top + 18), fill=fill, width=2)
 
 
-PERCENT = (0.0, 100.0)
-
-
 def _available(node: dict[str, Any], prefix: str, fallback: bool) -> bool:
     capabilities = node.get("capabilities")
     if not isinstance(capabilities, dict):
@@ -113,41 +143,160 @@ def _available(node: dict[str, Any], prefix: str, fallback: bool) -> bool:
     return fallback if not matches else any(value.get("supported") is True for value in matches)
 
 
+STANDARD_VALUES_LAYOUT = ValuesLayout(
+    row_y_positions=(91, 112, 133, 154, 175),
+)
+
+HEALTH_VALUES_LAYOUT = ValuesLayout(
+    title="SYSTEM HEALTH",
+    title_y=54,
+    row_y_positions=(80, 103, 126, 149, 172),
+)
+
+PERCENT_SCALE = ScaleDefinition(
+    ScaleMode.FIXED,
+    minimum=0.0,
+    maximum=100.0,
+)
+
+TEMPERATURE_SCALE = ScaleDefinition(
+    ScaleMode.FIXED,
+    minimum=20.0,
+    maximum=100.0,
+)
+
+DYNAMIC_SCALE = ScaleDefinition(
+    ScaleMode.DYNAMIC_ZERO_BASED,
+    minimum=0.0,
+    maximum=None,
+    step=10.0,
+)
+
+PERCENT_THRESHOLDS = (
+    Threshold(80.0, ThresholdTone.WARNING),
+    Threshold(95.0, ThresholdTone.CRITICAL),
+)
+
+TEMPERATURE_THRESHOLDS = (
+    Threshold(80.0, ThresholdTone.WARNING),
+    Threshold(90.0, ThresholdTone.CRITICAL),
+)
+
+
 CATEGORIES = (
-    Category("cpu", "CPU", draw_cpu, lambda node: _available(node, "cpu.", bool(node.get("cpu"))), (
-        Metric("load", "LOAD", "%", *PERCENT, _nested("cpu", "usage_percent")),
-        Metric("temperature", "TEMP", "C", 20.0, 100.0, _nested("cpu", "temperature_c")),
-        Metric("clock", "CLOCK", "MHz", 0.0, None, _nested("cpu", "clock_mhz")),
-        Metric("power", "PWR", "W", 0.0, None, _nested("cpu", "power_w")),
-    )),
-    Category("memory", "MEMORY", draw_memory, lambda node: _available(node, "memory.", bool(node.get("memory"))), (
-        Metric("ram", "RAM", "%", *PERCENT, _nested("memory", "usage_percent")),
-        Metric("swap", "SWAP", "%", *PERCENT, _nested("memory", "swap_usage_percent")),
-        Metric("psi", "PSI", "%", *PERCENT, _nested("memory", "pressure_some_percent")),
-    )),
-    Category("gpu", "GRAPHICS", draw_gpu, lambda node: _available(node, "gpu.", bool(node.get("gpu"))), (
-        Metric("load", "LOAD", "%", *PERCENT, _gpu("usage_percent")),
-        Metric("temperature", "TEMP", "C", 20.0, 100.0, _gpu("temperature_c")),
-        Metric("vram", "VRAM", "%", *PERCENT, _gpu("memory_usage_percent")),
-        Metric("power", "PWR", "W", 0.0, None, _gpu("power_w")),
-    )),
-    Category("storage", "STORAGE", draw_storage,
-             lambda node: _available(node, "storage.", node.get("storage", {}).get("usage_percent") is not None), (
-        Metric("used", "USED", "%", *PERCENT, _nested("storage", "usage_percent")),
-        Metric("read", "READ", "B/s", 0.0, None, _nested("storage", "read_bytes_per_second")),
-        Metric("write", "WRITE", "B/s", 0.0, None, _nested("storage", "write_bytes_per_second")),
-        Metric("temperature", "TEMP", "C", 20.0, 100.0, _nested("storage", "temperature_c")),
-    )),
-    Category("network", "NETWORK", draw_network,
-             lambda node: _available(node, "network.", bool(node.get("network", {}).get("interface"))), (
-        Metric("down", "DOWN", "B/s", 0.0, None, _nested("network", "down_bytes_per_second")),
-        Metric("up", "UP", "B/s", 0.0, None, _nested("network", "up_bytes_per_second")),
-    )),
-    Category("health", "HEALTH", draw_health, lambda node: True, (
-        Metric("temperature", "TEMP", "C", 20.0, 100.0, _nested("cpu", "temperature_c")),
-        Metric("power", "PWR", "W", 0.0, None, _nested("device", "power_w")),
-        Metric("errors", "ERRORS", "", 0.0, None, _errors),
-    )),
+    Category(
+        "cpu",
+        "CPU",
+        draw_cpu,
+        lambda node: _available(node, "cpu.", bool(node.get("cpu"))),
+        (
+            ValueRow("load", "LOAD", lambda node, _, __: percent(node.get("cpu", {}).get("usage_percent"))),
+            ValueRow("temperature", "TEMP", lambda node, _, __: temperature(node.get("cpu", {}).get("temperature_c"), unsupported=True)),
+            ValueRow("power", "POWER", lambda node, _, __: power(node.get("cpu", {}).get("power_w"), unsupported=True)),
+            ValueRow("clock", "CLOCK", lambda node, _, __: clock(node.get("cpu", {}).get("clock_mhz"))),
+        ),
+        STANDARD_VALUES_LAYOUT,
+        (
+            ChartMetric("load", "LOAD", "%", _nested("cpu", "usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
+            ChartMetric("temperature", "TEMP", "C", _nested("cpu", "temperature_c"), TEMPERATURE_SCALE, TEMPERATURE_THRESHOLDS),
+            ChartMetric("clock", "CLOCK", "MHz", _nested("cpu", "clock_mhz"), DYNAMIC_SCALE),
+            ChartMetric("power", "PWR", "W", _nested("cpu", "power_w"), DYNAMIC_SCALE),
+        ),
+    ),
+    Category(
+        "memory",
+        "MEMORY",
+        draw_memory,
+        lambda node: _available(node, "memory.", bool(node.get("memory"))),
+        (
+            ValueRow("ram_load", "RAM LOAD", lambda node, _, __: percent(node.get("memory", {}).get("usage_percent"))),
+            ValueRow("used", "USED", lambda node, _, __: bytes_pair(node.get("memory", {}).get("used_bytes"), node.get("memory", {}).get("total_bytes"))),
+            ValueRow("swap", "SWAP", lambda node, _, __: bytes_pair(node.get("memory", {}).get("swap_used_bytes"), node.get("memory", {}).get("swap_total_bytes"), zero_is_off=True)),
+            ValueRow("psi", "PSI", lambda node, _, __: percent(node.get("memory", {}).get("pressure_some_percent"))),
+        ),
+        STANDARD_VALUES_LAYOUT,
+        (
+            ChartMetric("ram", "RAM", "%", _nested("memory", "usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
+            ChartMetric("swap", "SWAP", "%", _nested("memory", "swap_usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
+            ChartMetric("psi", "PSI", "%", _nested("memory", "pressure_some_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
+        ),
+    ),
+    Category(
+        "gpu",
+        "GRAPHICS",
+        draw_gpu,
+        lambda node: _available(node, "gpu.", bool(node.get("gpu"))),
+        (
+            ValueRow("gpu_name", "GPU NAME", lambda node, index, __: str(_gpu_device(node, index).get("name") or "N/A"), fit_width=205),
+            ValueRow("load", "LOAD", lambda node, index, __: percent(_gpu_device(node, index).get("usage_percent"))),
+            ValueRow("temperature_power", "TEMP / PWR", lambda node, index, __: f"{temperature(_gpu_device(node, index).get('temperature_c'))} / {power(_gpu_device(node, index).get('power_w'))}"),
+            ValueRow("vram", "VRAM", lambda node, index, __: bytes_pair(_gpu_device(node, index).get("memory_used_bytes"), _gpu_device(node, index).get("memory_total_bytes"))),
+            ValueRow("fan_clock", "FAN / CLK", lambda node, index, __: f"{percent(_gpu_device(node, index).get('fan_percent'))} / {clock(_gpu_device(node, index).get('clock_mhz'))}"),
+        ),
+        STANDARD_VALUES_LAYOUT,
+        (
+            ChartMetric("load", "LOAD", "%", _gpu("usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
+            ChartMetric("temperature", "TEMP", "C", _gpu("temperature_c"), TEMPERATURE_SCALE, TEMPERATURE_THRESHOLDS),
+            ChartMetric("vram", "VRAM", "%", _gpu("memory_usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
+            ChartMetric("power", "PWR", "W", _gpu("power_w"), DYNAMIC_SCALE),
+        ),
+    ),
+    Category(
+        "storage",
+        "STORAGE",
+        draw_storage,
+        lambda node: _available(node, "storage.", node.get("storage", {}).get("usage_percent") is not None),
+        (
+            ValueRow("volume", "VOLUME", lambda node, _, __: str(node.get("storage", {}).get("name") or "N/A")),
+            ValueRow("used", "USED", lambda node, _, __: percent(node.get("storage", {}).get("usage_percent"))),
+            ValueRow("capacity", "CAPACITY", lambda node, _, __: bytes_pair(node.get("storage", {}).get("used_bytes"), node.get("storage", {}).get("total_bytes"))),
+            ValueRow("read_write", "READ / WRITE", lambda node, _, __: f"{rate(node.get('storage', {}).get('read_bytes_per_second'))} / {rate(node.get('storage', {}).get('write_bytes_per_second'))}"),
+            ValueRow("temperature", "TEMP", lambda node, _, __: temperature(node.get("storage", {}).get("temperature_c"), unsupported=True)),
+        ),
+        STANDARD_VALUES_LAYOUT,
+        (
+            ChartMetric("used", "USED", "%", _nested("storage", "usage_percent"), PERCENT_SCALE, PERCENT_THRESHOLDS),
+            ChartMetric("read", "READ", "B/s", _nested("storage", "read_bytes_per_second"), DYNAMIC_SCALE),
+            ChartMetric("write", "WRITE", "B/s", _nested("storage", "write_bytes_per_second"), DYNAMIC_SCALE),
+            ChartMetric("temperature", "TEMP", "C", _nested("storage", "temperature_c"), TEMPERATURE_SCALE, TEMPERATURE_THRESHOLDS),
+        ),
+    ),
+    Category(
+        "network",
+        "NETWORK",
+        draw_network,
+        lambda node: _available(node, "network.", bool(node.get("network", {}).get("interface"))),
+        (
+            ValueRow("interface", "INTERFACE", lambda node, _, __: str(node.get("network", {}).get("interface") or "N/A")),
+            ValueRow("link", "LINK", lambda node, _, __: boolean(node.get("network", {}).get("link_up"))),
+            ValueRow("down", "DOWN", lambda node, _, __: rate(node.get("network", {}).get("down_bytes_per_second"))),
+            ValueRow("up", "UP", lambda node, _, __: rate(node.get("network", {}).get("up_bytes_per_second"))),
+        ),
+        STANDARD_VALUES_LAYOUT,
+        (
+            ChartMetric("down", "DOWN", "B/s", _nested("network", "down_bytes_per_second"), DYNAMIC_SCALE),
+            ChartMetric("up", "UP", "B/s", _nested("network", "up_bytes_per_second"), DYNAMIC_SCALE),
+        ),
+    ),
+    Category(
+        "health",
+        "HEALTH",
+        draw_health,
+        lambda node: True,
+        (
+            ValueRow("collector", "COLLECTOR", _collector_text, _collector_tone),
+            ValueRow("undervoltage", "UNDERVOLTAGE", lambda node, _, __: boolean(node.get("health", {}).get("undervoltage")), _health_tone("undervoltage")),
+            ValueRow("throttling", "THROTTLING", lambda node, _, __: boolean(node.get("health", {}).get("throttled")), _health_tone("throttled")),
+            ValueRow("data_age", "DATA AGE", lambda _, __, age: age),
+            ValueRow("uptime", "UPTIME", lambda node, _, __: uptime(node.get("health", {}).get("uptime_seconds"))),
+        ),
+        HEALTH_VALUES_LAYOUT,
+        (
+            ChartMetric("temperature", "TEMP", "C", _nested("cpu", "temperature_c"), TEMPERATURE_SCALE, TEMPERATURE_THRESHOLDS),
+            ChartMetric("power", "PWR", "W", _nested("device", "power_w"), DYNAMIC_SCALE),
+            ChartMetric("errors", "ERRORS", "", _errors, DYNAMIC_SCALE),
+        ),
+    ),
 )
 
 
@@ -166,11 +315,12 @@ def category_at(x: int, y: int) -> Category | None:
     return CATEGORIES[(y - 32) // 80 * 3 + min(2, x // 107)]
 
 
-def metric_at(category_id: str, x: int, y: int) -> Metric | None:
-    metrics = category(category_id).metrics
+def metric_at(category_id: str, x: int, y: int) -> ChartMetric | None:
+    metrics = category(category_id).chart_metrics
     if not metrics or not 32 <= y < 56 or not 0 <= x < 320:
         return None
     return metrics[min(len(metrics) - 1, x * len(metrics) // 320)]
+
 
 def detail_view_at(x: int, y: int) -> str | None:
     if not 56 <= y < 80 or not 0 <= x < 320:

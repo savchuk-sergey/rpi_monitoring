@@ -57,9 +57,9 @@ class UiState:
     def metric_id(self, node: dict[str, Any]) -> str:
         selected_category = category(self.category_id(node))
         selected = self.metric_by_category.get(selected_category.id)
-        if selected in {metric.id for metric in selected_category.metrics}:
+        if selected in {metric.id for metric in selected_category.chart_metrics}:
             return selected
-        return selected_category.metrics[0].id if selected_category.metrics else ""
+        return selected_category.chart_metrics[0].id if selected_category.chart_metrics else ""
 
 
 @dataclass(frozen=True)

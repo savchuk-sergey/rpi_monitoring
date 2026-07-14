@@ -2,11 +2,12 @@ import copy
 import hashlib
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from PIL import Image, ImageColor
 
 from display.drivers.ili9341 import ILI9341, rgb565
-from display.categories import category, category_at, detail_view_at, metric_at
+from display.categories import CATEGORIES, category, category_at, detail_view_at, metric_at
 from display.gestures import GestureKind, TouchRecognizer
 from display.history import HistoryStore
 from display.navigation import (
@@ -29,6 +30,7 @@ from display.renderer import (
     MUTED,
     RED,
     _age,
+    _chart,
     _format_bytes_pair,
     _format_clock,
     _format_power,
@@ -86,6 +88,49 @@ RENDER_HASHES = {
     "overview_waiting": "7064e7983ea4571ed55586a2d656d493bbce9032bb44374853015a5d7faac6d4",
     "values": "fd5a1de62d72977ab5a49e5ea83584b9a535033d80f07ac30f441e9d100ba928",
 }
+
+CATEGORY_VALUES_HASHES = {
+    "cpu": "533e2a325278ea7d3e11f2e3d2c8af5115727e48ec87ee3f27e7066416ec2e89",
+    "memory": "1065d393117aaa84c532ad08e445b9c06caeccf691984d12dd654ad930485291",
+    "gpu": "c64fa3bd2e601dbf61bb08b5e0a51a4b21f749fb434048cc1a84db1e3f61b9eb",
+    "storage": "aa1a2645e314dad9a80a553cc00108d565b3c2759d1b9d57804ba0c8db2bf465",
+    "network": "6662bee7c7150e22c93b0c49a4b3cd7b593c29c1508e74d6aaf4bf3c4a0f836a",
+    "health": "44c16e21b0339f08419a689908303c9400d1488d6cea2f5522e7d9b3bd4a2d8c",
+}
+
+
+def complete_v2_node(**changes) -> dict:
+    value = node(
+        cpu={"usage_percent": 47, "temperature_c": 63, "power_w": 55, "clock_mhz": 4725},
+        memory={
+            "usage_percent": 63,
+            "used_bytes": 24 * 1024**3,
+            "total_bytes": 32 * 1024**3,
+            "swap_used_bytes": 2 * 1024**3,
+            "swap_total_bytes": 8 * 1024**3,
+            "swap_usage_percent": 25,
+            "pressure_some_percent": 1.25,
+        },
+        gpu=[{
+            "id": "0", "name": "RTX", "usage_percent": 81, "temperature_c": 69,
+            "power_w": 117, "memory_used_bytes": 6 * 1024**3,
+            "memory_total_bytes": 12 * 1024**3, "memory_usage_percent": 50,
+            "fan_percent": 74, "clock_mhz": 2625,
+        }],
+        health={"uptime_seconds": 90000, "undervoltage": False, "throttled": False},
+        storage={
+            "name": "/", "usage_percent": 60, "used_bytes": 60 * 1024**3,
+            "total_bytes": 100 * 1024**3, "read_bytes_per_second": 1250000,
+            "write_bytes_per_second": 640000, "temperature_c": 42,
+        },
+        network={
+            "interface": "eth0", "link_up": True,
+            "down_bytes_per_second": 12500000, "up_bytes_per_second": 2500000,
+        },
+        device={"power_w": 6.2},
+    )
+    value.update(changes)
+    return value
 
 
 class DisplayTests(unittest.TestCase):
@@ -185,6 +230,17 @@ class DisplayTests(unittest.TestCase):
                     ).tobytes()
                 ).hexdigest()
                 self.assertEqual(RENDER_HASHES[name], digest)
+
+    def test_category_values_render_hashes_are_unchanged(self) -> None:
+        value = complete_v2_node()
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        for category_id, expected in CATEGORY_VALUES_HASHES.items():
+            with self.subTest(category=category_id):
+                state = UiState(screen=Screen.VALUES, selected_category_id=category_id)
+                digest = hashlib.sha256(
+                    render(value, (1, 1), True, state, now=now).tobytes()
+                ).hexdigest()
+                self.assertEqual(expected, digest)
 
     def test_renderer_distinguishes_empty_offline_and_stale_states(self) -> None:
         self.assertNotEqual(render(None).tobytes(), render(None, hub_online=False).tobytes())
@@ -289,7 +345,7 @@ class DisplayTests(unittest.TestCase):
         self.assertTrue(category("storage").available(node(capabilities={"storage.usage_percent": capability})))
         unsupported = {"supported": False, "source": None, "reason": "sensor_not_found"}
         self.assertFalse(category("gpu").available(node(gpu=[{}], capabilities={"gpu.usage_percent": unsupported})))
-        self.assertEqual(100.0, category("cpu").metrics[0].maximum)
+        self.assertEqual(100.0, category("cpu").chart_metrics[0].scale.maximum)
         self.assertEqual("temperature", metric_at("cpu", 150, 50).id)
         self.assertEqual("values", detail_view_at(80, 68))
         self.assertEqual("graph", detail_view_at(240, 68))
@@ -364,6 +420,49 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual((320, 240), graph.size)
         self.assertNotEqual(graph.tobytes(), values.tobytes())
 
+    def test_values_ignore_chart_selection_but_graph_uses_it(self) -> None:
+        value = complete_v2_node()
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        values_frames = {
+            render(
+                value,
+                ui_state=UiState(
+                    screen=Screen.VALUES,
+                    metric_by_category={"cpu": metric_id},
+                ),
+                now=now,
+            ).tobytes()
+            for metric_id in ("load", "temperature", "power")
+        }
+        self.assertEqual(1, len(values_frames))
+
+        history = HistoryStore()
+        history.add(complete_v2_node(timestamp_utc="2026-07-12T03:00:00Z"))
+        graph_frames = {
+            render(
+                value,
+                ui_state=UiState(
+                    screen=Screen.GRAPH,
+                    metric_by_category={"cpu": metric_id},
+                ),
+                history=history,
+                now=now,
+            ).tobytes()
+            for metric_id in ("load", "temperature")
+        }
+        self.assertEqual(2, len(graph_frames))
+
+    def test_graph_uses_history_window_seconds_for_chart_bounds(self) -> None:
+        history = HistoryStore(window_seconds=42)
+        with patch("display.renderer._chart", wraps=_chart) as chart:
+            render(
+                complete_v2_node(),
+                ui_state=UiState(screen=Screen.GRAPH),
+                history=history,
+                now=datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc),
+            )
+        self.assertEqual(42, chart.call_args.args[-1])
+
     def test_v2_values_and_history_use_extended_metrics(self) -> None:
         value = node(
             cpu={"usage_percent": 47, "temperature_c": 63, "power_w": 55, "clock_mhz": 4725},
@@ -420,6 +519,40 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual("24.0/32.0GiB", _format_bytes_pair(24 * 1024**3, 32 * 1024**3))
         self.assertEqual("1d01h", _format_uptime(90000))
         self.assertEqual("11.9M/s", _format_rate(12500000))
+
+    def test_history_contains_chart_metrics_only_and_keeps_existing_semantics(self) -> None:
+        value = complete_v2_node()
+        value["gpu"].append({
+            "id": "1",
+            "name": "SECOND",
+            "usage_percent": 9,
+            "temperature_c": 30,
+            "power_w": 10,
+            "memory_usage_percent": 20,
+        })
+        history = HistoryStore()
+        self.assertTrue(history.add(value))
+        for item in CATEGORIES:
+            for metric in item.chart_metrics:
+                with self.subTest(category=item.id, metric=metric.id):
+                    self.assertEqual(1, len(history.series("desktop", item.id, metric.id)))
+        self.assertEqual(55, history.series("desktop", "cpu", "power")[0].value)
+        self.assertEqual(63, history.series("desktop", "memory", "ram")[0].value)
+        self.assertEqual(25, history.series("desktop", "memory", "swap")[0].value)
+        self.assertEqual(1.25, history.series("desktop", "memory", "psi")[0].value)
+        self.assertEqual(81, history.series("desktop", "gpu", "load")[0].value)
+        self.assertEqual((), history.series("desktop", "memory", "ram_load"))
+        self.assertEqual((), history.series("desktop", "gpu", "gpu_name"))
+        self.assertEqual((), history.series("desktop", "storage", "capacity"))
+
+        offline = complete_v2_node(
+            timestamp_utc="2026-07-12T03:00:02Z",
+            online=False,
+        )
+        self.assertTrue(history.add(offline))
+        for item in CATEGORIES:
+            for metric in item.chart_metrics:
+                self.assertIsNone(history.series("desktop", item.id, metric.id)[-1].value)
 
     def test_calibration_maps_and_clamps_coordinates(self) -> None:
         calibration = {

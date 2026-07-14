@@ -6,6 +6,18 @@ from math import ceil
 from PIL import Image, ImageDraw, ImageFont
 
 from display.categories import CATEGORIES, category
+from display.detail_model import ChartMetric, ScaleMode, ThresholdTone, ValueTone
+from display.formatting import (
+    boolean as _format_bool,
+    bytes_pair as _format_bytes_pair,
+    clock as _format_clock,
+    number as _number,
+    percent as _format_percent,
+    power as _format_power,
+    rate as _format_rate,
+    temperature as _format_temperature,
+    uptime as _format_uptime,
+)
 from display.history import HistoryStore, Sample
 from display.ui_state import Screen, UiState
 
@@ -125,10 +137,10 @@ def _details(
     category_id = state.category_id(node)
     selected_category = category(category_id)
     if category_id == "health":
-        _health_detail(draw, fonts, node, age)
+        _values_detail(draw, fonts, node, state, age)
         return
-    metrics = selected_category.metrics
-    selected_metric_id = state.metric_id(node)
+    metrics = selected_category.chart_metrics
+    selected_metric_id = state.metric_id(node) if state.screen == Screen.GRAPH else metrics[0].id
     selected_metric = next(
         (metric for metric in metrics if metric.id == selected_metric_id),
         metrics[0],
@@ -163,7 +175,7 @@ def _details(
             draw.line((x - 48, 78, x + 48, 78), fill=BRIGHT, width=2)
 
     if state.screen == Screen.VALUES:
-        _values_detail(draw, fonts, node, state)
+        _values_detail(draw, fonts, node, state, age)
         return
     samples = (
         history.series(node["node_id"], category_id, selected_metric.id)
@@ -177,6 +189,7 @@ def _details(
         selected_metric,
         selected_metric.value(node, state.selected_gpu_index),
         now,
+        history.window_seconds if history else 300,
     )
 
 def _values_detail(
@@ -184,65 +197,29 @@ def _values_detail(
     fonts: dict[str, Any],
     node: dict[str, Any],
     state: UiState,
+    age: str,
 ) -> None:
-    category_id = state.category_id(node)
-    if category_id == "cpu":
-        cpu = node.get("cpu", {})
-        rows = (
-            ("LOAD", _format_percent(cpu.get("usage_percent"))),
-            ("TEMP", _format_temperature(cpu.get("temperature_c"), True)),
-            ("POWER", _format_power(cpu.get("power_w"), True)),
-            ("CLOCK", _format_clock(cpu.get("clock_mhz"))),
+    selected = category(state.category_id(node))
+    layout = selected.values_layout
+    if layout.title is not None:
+        draw.text((10, layout.title_y), layout.title, font=fonts["detail"], fill=GREEN, anchor="lm")
+    colors = {
+        ValueTone.NORMAL: BRIGHT,
+        ValueTone.WARNING: AMBER,
+        ValueTone.CRITICAL: RED,
+    }
+    for y, row in zip(layout.row_y_positions, selected.value_rows):
+        value = row.text(node, state.selected_gpu_index, age)
+        if row.fit_width is not None:
+            value = _fit(draw, value, fonts["detail"], row.fit_width)
+        draw.text((10, y), row.title, font=fonts["detail"], fill=MUTED, anchor="lm")
+        draw.text(
+            (310, y),
+            value,
+            font=fonts["detail"],
+            fill=colors[row.tone(node, state.selected_gpu_index, age)],
+            anchor="rm",
         )
-    elif category_id == "memory":
-        memory = node.get("memory", {})
-        rows = (
-            ("RAM LOAD", _format_percent(memory.get("usage_percent"))),
-            ("USED", _format_bytes_pair(memory.get("used_bytes"), memory.get("total_bytes"))),
-            ("SWAP", _format_bytes_pair(memory.get("swap_used_bytes"), memory.get("swap_total_bytes"), True)),
-            ("PSI", _format_percent(memory.get("pressure_some_percent"))),
-        )
-    elif category_id == "gpu":
-        devices = node.get("gpu") or []
-        gpu = devices[state.selected_gpu_index % len(devices)] if devices else {}
-        name = _fit(draw, str(gpu.get("name", "N/A")), fonts["detail"], 205)
-        rows = (
-            ("GPU NAME", name),
-            ("LOAD", _format_percent(gpu.get("usage_percent"))),
-            (
-                "TEMP / PWR",
-                f"{_format_temperature(gpu.get('temperature_c'))} / {_format_power(gpu.get('power_w'))}",
-            ),
-            ("VRAM", _format_bytes_pair(gpu.get("memory_used_bytes"), gpu.get("memory_total_bytes"))),
-            (
-                "FAN / CLK",
-                f"{_format_percent(gpu.get('fan_percent'))} / {_format_clock(gpu.get('clock_mhz'))}",
-            ),
-        )
-    elif category_id == "storage":
-        storage = node.get("storage", {})
-        rows = (
-            ("VOLUME", str(storage.get("name") or "N/A")),
-            ("USED", _format_percent(storage.get("usage_percent"))),
-            ("CAPACITY", _format_bytes_pair(storage.get("used_bytes"), storage.get("total_bytes"))),
-            (
-                "READ / WRITE",
-                f"{_format_rate(storage.get('read_bytes_per_second'))} / {_format_rate(storage.get('write_bytes_per_second'))}",
-            ),
-            ("TEMP", _format_temperature(storage.get("temperature_c"), True)),
-        )
-    else:
-        network = node.get("network", {})
-        rows = (
-            ("INTERFACE", str(network.get("interface") or "N/A")),
-            ("LINK", _format_bool(network.get("link_up"))),
-            ("DOWN", _format_rate(network.get("down_bytes_per_second"))),
-            ("UP", _format_rate(network.get("up_bytes_per_second"))),
-        )
-    positions = (91, 112, 133, 154, 175)
-    for y, (label, value) in zip(positions, rows):
-        draw.text((10, y), label, font=fonts["detail"], fill=MUTED, anchor="lm")
-        draw.text((310, y), value, font=fonts["detail"], fill=BRIGHT, anchor="rm")
 
 def _detail_header(
     draw: ImageDraw.ImageDraw,
@@ -332,27 +309,35 @@ def _chart(
     draw: ImageDraw.ImageDraw,
     fonts: dict[str, Any],
     samples: tuple[Sample, ...],
-    metric: Any,
+    metric: ChartMetric,
     current: Any,
     now: datetime | None,
+    window_seconds: int,
 ) -> None:
     left, top, right, bottom = 28, 82, 310, 160
     values = [sample.value for sample in samples if sample.value is not None]
-    maximum = metric.maximum
-    if maximum is None:
-        observed = max(values + ([float(current)] if current is not None else [1.0]))
-        maximum = max(1.0, ceil(observed / 10) * 10)
-    minimum = metric.minimum
+    if metric.scale.mode is ScaleMode.FIXED:
+        minimum = metric.scale.minimum
+        maximum = metric.scale.maximum
+        assert maximum is not None
+    elif metric.scale.mode is ScaleMode.DYNAMIC_ZERO_BASED:
+        minimum = 0.0
+        observed = max(values + ([float(current)] if current is not None else []) + [1.0])
+        maximum = max(
+            1.0,
+            ceil(observed / metric.scale.step) * metric.scale.step,
+        )
+    else:
+        raise ValueError("dynamic range scale is not implemented")
     for y in (top, (top + bottom) // 2, bottom):
         draw.line((left, y, right, y), fill=MUTED)
-    if metric.unit == "%":
-        for threshold, color in ((80, AMBER), (95, RED)):
-            y = round(bottom - (threshold - minimum) / (maximum - minimum) * (bottom - top))
-            draw.line((right - 18, y, right, y), fill=color)
-    elif metric.unit == "C":
-        for threshold, color in ((80, AMBER), (90, RED)):
-            y = round(bottom - (threshold - minimum) / (maximum - minimum) * (bottom - top))
-            draw.line((right - 18, y, right, y), fill=color)
+    threshold_colors = {
+        ThresholdTone.WARNING: AMBER,
+        ThresholdTone.CRITICAL: RED,
+    }
+    for threshold in metric.thresholds:
+        y = round(bottom - (threshold.value - minimum) / (maximum - minimum) * (bottom - top))
+        draw.line((right - 18, y, right, y), fill=threshold_colors[threshold.tone])
     draw.text((24, top), _number(maximum), font=fonts["tiny"], fill=MUTED, anchor="rm")
     draw.text((24, bottom), _number(minimum), font=fonts["tiny"], fill=MUTED, anchor="rm")
 
@@ -361,7 +346,7 @@ def _chart(
         if not samples
         else max(samples[-1].timestamp, (now or datetime.now(timezone.utc)).timestamp())
     )
-    start = end - 300
+    start = end - window_seconds
     segment: list[tuple[int, int]] = []
     last_point = None
     for sample in samples:
@@ -370,7 +355,7 @@ def _chart(
                 draw.line(segment, fill=GREEN, width=2)
             segment = []
             continue
-        x = round(left + (sample.timestamp - start) / 300 * (right - left))
+        x = round(left + (sample.timestamp - start) / window_seconds * (right - left))
         ratio = (float(sample.value) - minimum) / (maximum - minimum)
         y = round(bottom - min(1.0, max(0.0, ratio)) * (bottom - top))
         segment.append((x, y))
@@ -394,28 +379,6 @@ def _chart(
     draw.text((310, 177), f"MAX {maximum_value}", font=fonts["small"], fill=MUTED, anchor="rm")
 
 
-def _health_detail(
-    draw: ImageDraw.ImageDraw,
-    fonts: dict[str, Any],
-    node: dict[str, Any],
-    age: str,
-) -> None:
-    errors = node.get("collector", {}).get("errors") or []
-    health = node.get("health", {})
-    rows = (
-        ("COLLECTOR", "OK" if not errors else f"ERR {len(errors)}"),
-        ("UNDERVOLTAGE", _format_bool(health.get("undervoltage"))),
-        ("THROTTLING", _format_bool(health.get("throttled"))),
-        ("DATA AGE", age),
-        ("UPTIME", _format_uptime(health.get("uptime_seconds"))),
-    )
-    draw.text((10, 54), "SYSTEM HEALTH", font=fonts["detail"], fill=GREEN, anchor="lm")
-    for y, (label, value) in zip((80, 103, 126, 149, 172), rows):
-        color = RED if value == "YES" else AMBER if label == "COLLECTOR" and errors else BRIGHT
-        draw.text((10, y), label, font=fonts["detail"], fill=MUTED, anchor="lm")
-        draw.text((310, y), value, font=fonts["detail"], fill=color, anchor="rm")
-
-
 def _format_metric(value: Any, unit: str) -> str:
     if unit == "%":
         return _format_percent(value)
@@ -428,43 +391,6 @@ def _format_metric(value: Any, unit: str) -> str:
     if unit == "B/s":
         return _format_rate(value)
     return "—" if value is None else _number(value)
-
-
-def _format_clock(value: Any) -> str:
-    if value is None:
-        return "N/A"
-    return f"{float(value) / 1000:.2f}G"
-
-
-def _format_bytes_pair(used: Any, total: Any, zero_is_off: bool = False) -> str:
-    if used is None or total is None:
-        return "N/A"
-    if zero_is_off and not total:
-        return "OFF"
-    gib = 1024 ** 3
-    return f"{float(used) / gib:.1f}/{float(total) / gib:.1f}GiB"
-
-
-def _format_bool(value: Any) -> str:
-    return "N/A" if value is None else "YES" if value else "NO"
-
-
-def _format_uptime(value: Any) -> str:
-    if value is None:
-        return "N/A"
-    days, remainder = divmod(max(0, int(value)), 86400)
-    hours = remainder // 3600
-    return f"{days}d{hours:02d}h"
-
-
-def _format_rate(value: Any) -> str:
-    if value is None:
-        return "N/A"
-    number = float(value)
-    for divisor, suffix in ((1024 ** 2, "M"), (1024, "K")):
-        if number >= divisor:
-            return f"{number / divisor:.1f}{suffix}/s"
-    return f"{number:.0f}B/s"
 
 
 def _empty_state(
@@ -486,10 +412,6 @@ def _value(value: Any, unit: str) -> str:
         return _format_power(value)
     return "—" if value is None else f"{_number(value)}{unit}"
 
-
-def _number(value: Any) -> str:
-    number = float(value)
-    return f"{number:.0f}" if number.is_integer() else f"{number:.1f}"
 
 def _status(node: dict[str, Any], hub_online: bool) -> tuple[str, str]:
     if not hub_online:
@@ -520,24 +442,6 @@ def _age(timestamp: Any, now: datetime | None = None) -> str:
     if seconds < 86400:
         return f"{seconds // 3600}h"
     return f"{seconds // 86400}d"
-
-
-def _format_percent(value: Any) -> str:
-    return "—" if value is None else f"{float(value):.0f}%"
-
-
-def _format_temperature(value: Any, unsupported: bool = False) -> str:
-    if value is None:
-        return "N/A" if unsupported else "—"
-    number = float(value)
-    return f"{number:.0f}°C" if number.is_integer() else f"{number:.1f}°C"
-
-
-def _format_power(value: Any, unsupported: bool = False) -> str:
-    if value is None:
-        return "N/A" if unsupported else "—"
-    number = float(value)
-    return f"{number:.1f}W" if abs(number) < 10 else f"{number:.0f}W"
 
 
 def _metric_row(

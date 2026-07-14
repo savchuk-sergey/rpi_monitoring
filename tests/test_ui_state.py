@@ -109,6 +109,9 @@ class UiStateTests(unittest.TestCase):
         state.selected_category_id = "storage"
         state.metric_by_category["storage"] = "missing"
         self.assertEqual("used", state.metric_id(value))
+        state.selected_category_id = "memory"
+        state.metric_by_category["memory"] = "ram_load"
+        self.assertEqual("ram", state.metric_id(value))
         self.assertEqual("cpu", UiState().category_id(waiting()))
 
     def test_reducer_copies_state_dictionary_and_does_not_mutate_inputs(self) -> None:

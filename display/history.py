@@ -35,7 +35,7 @@ class HistoryStore:
 
         online = bool(node.get("online"))
         for category in CATEGORIES:
-            for metric in category.metrics:
+            for metric in category.chart_metrics:
                 value = metric.value(node, 0) if online else None
                 number = float(value) if value is not None else None
                 samples = self._samples[node_id][f"{category.id}.{metric.id}"]
