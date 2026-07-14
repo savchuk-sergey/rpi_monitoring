@@ -17,6 +17,10 @@ from display.ui_state import (
     PowerHoldReleased,
     PowerHoldStarted,
     PowerHoldTick,
+    PowerRequestAccepted,
+    PowerRequestError,
+    PowerRequestFailed,
+    PowerRequestStatus,
     Screen,
     ShortPress,
     UiContext,
@@ -70,8 +74,17 @@ def context(
     menu: float = 15.0,
     rotate: float = 10.0,
     hold: float = 1.5,
+    power_enabled: bool = True,
 ) -> UiContext:
-    return UiContext(nodes, pause, detail, menu, rotate, hold)
+    return UiContext(
+        nodes,
+        pause,
+        detail,
+        menu,
+        rotate,
+        hold,
+        power_actions_enabled=power_enabled,
+    )
 
 
 class UiStateTests(unittest.TestCase):
@@ -94,7 +107,14 @@ class UiStateTests(unittest.TestCase):
             {"REBOOT": "reboot", "POWEROFF": "poweroff"},
             {item.name: item.value for item in PowerAction},
         )
-        self.assertEqual("none", UiEffect.NONE.value)
+        self.assertEqual(
+            {"NONE": "none", "REQUEST_POWER": "request_power"},
+            {item.name: item.value for item in UiEffect},
+        )
+        self.assertEqual(
+            {"SENDING": "sending", "ACCEPTED": "accepted"},
+            {item.name: item.value for item in PowerRequestStatus},
+        )
         self.assertIsNone(UiState().pending_power_action)
         self.assertEqual(1.5, UiContext((), 1, 2, 3, 4).power_confirm_hold_seconds)
 
@@ -1437,14 +1457,24 @@ class UiStateTests(unittest.TestCase):
                 reduce_ui(started.state, PowerHoldTick(100), context(hold=hold_seconds)).state.screen,
             )
 
-    def test_phase_8_power_screens_refresh_timeout_rotation_and_pending_back(self) -> None:
+    def test_phase_9_power_screens_refresh_timeout_rotation_and_navigation(self) -> None:
         nodes = (node("a"), node("b"))
-        for screen in (Screen.POWER_CONFIRM, Screen.POWER_PENDING):
+        for screen in (Screen.POWER_CONFIRM, Screen.POWER_PENDING, Screen.POWER_ERROR):
             state = UiState(
                 screen=screen,
                 selected_node_id="a",
                 pending_power_action=PowerAction.POWEROFF,
                 confirmation_started_at=1 if screen == Screen.POWER_CONFIRM else None,
+                power_request_status=(
+                    PowerRequestStatus.SENDING
+                    if screen == Screen.POWER_PENDING
+                    else None
+                ),
+                power_request_error=(
+                    PowerRequestError.TIMEOUT
+                    if screen == Screen.POWER_ERROR
+                    else None
+                ),
                 last_interaction_at=0,
             )
             for refreshed_nodes, online in (((), True), ((), False), (nodes, True), (nodes, False)):
@@ -1460,19 +1490,43 @@ class UiStateTests(unittest.TestCase):
             suppressed = reduce_ui(state, InactivityTick(15, True), context(nodes, menu=15))
             self.assertEqual(screen, suppressed.state.screen)
             timed_out = reduce_ui(state, InactivityTick(15, False), context(nodes, menu=15))
-            self.assertEqual((Screen.SYSTEM, None, None, "timeout_system"), (
-                timed_out.state.screen,
-                timed_out.state.pending_power_action,
-                timed_out.state.confirmation_started_at,
-                timed_out.completed_action,
-            ))
+            if screen == Screen.POWER_PENDING:
+                self.assertEqual(state, timed_out.state)
+                self.assertIsNone(timed_out.completed_action)
+            else:
+                self.assertEqual((Screen.SYSTEM, None, None, None, None, "timeout_system"), (
+                    timed_out.state.screen,
+                    timed_out.state.pending_power_action,
+                    timed_out.state.confirmation_started_at,
+                    timed_out.state.power_request_status,
+                    timed_out.state.power_request_error,
+                    timed_out.completed_action,
+                ))
 
         pending = UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT)
         back = reduce_ui(pending, ShortPress(160, 210, 20), context(nodes))
-        self.assertEqual((Screen.SYSTEM, None, "power_pending_back"), (
+        self.assertEqual((Screen.POWER_PENDING, PowerAction.REBOOT, None), (
             back.state.screen, back.state.pending_power_action, back.completed_action
         ))
         self.assertFalse(reduce_ui(pending, PowerHoldReleased(21), context(nodes)).changed)
+
+        error = UiState(
+            screen=Screen.POWER_ERROR,
+            pending_power_action=PowerAction.REBOOT,
+            power_request_error=PowerRequestError.IO_ERROR,
+        )
+        cleared = reduce_ui(error, ShortPress(160, 210, 20), context(nodes))
+        self.assertEqual(
+            (Screen.SYSTEM, None, None, None, None, "power_error_back"),
+            (
+                cleared.state.screen,
+                cleared.state.pending_power_action,
+                cleared.state.confirmation_started_at,
+                cleared.state.power_request_status,
+                cleared.state.power_request_error,
+                cleared.completed_action,
+            ),
+        )
 
     def test_phase_8_pending_timeout_starts_at_hold_completion(self) -> None:
         confirmation = UiState(
@@ -1510,9 +1564,9 @@ class UiStateTests(unittest.TestCase):
                 active.completed_action,
             ),
         )
-        self.assertIs(UiEffect.NONE, completed.effect)
+        self.assertIs(UiEffect.REQUEST_POWER, completed.effect)
 
-    def test_all_events_have_no_effect_and_power_error_remains_unreachable(self) -> None:
+    def test_phase_9_effect_and_typed_result_lifecycle(self) -> None:
         value = node()
         events = (
             DataRefreshed((value,), True, 1),
@@ -1538,12 +1592,78 @@ class UiStateTests(unittest.TestCase):
         )
         self.assertEqual(Screen.POWER_CONFIRM, confirmation.state.screen)
         self.assertEqual(Screen.POWER_PENDING, pending.state.screen)
-        error = UiState(screen=Screen.POWER_ERROR)
-        self.assertEqual(
-            Screen.POWER_ERROR,
-            reduce_ui(error, ShortPress(160, 210, 13), context((value,))).state.screen,
+        self.assertIs(UiEffect.REQUEST_POWER, pending.effect)
+        self.assertIs(PowerRequestStatus.SENDING, pending.state.power_request_status)
+        self.assertIs(PowerAction.REBOOT, pending.state.pending_power_action)
+        self.assertIs(
+            UiEffect.NONE,
+            reduce_ui(pending.state, PowerHoldTick(12.1), context((value,), hold=1)).effect,
         )
-        self.assertIs(UiEffect.NONE, pending.effect)
+
+        accepted = reduce_ui(
+            pending.state,
+            PowerRequestAccepted(13),
+            context((value,)),
+        )
+        self.assertEqual(
+            (Screen.POWER_PENDING, PowerRequestStatus.ACCEPTED, "power_request_accepted"),
+            (
+                accepted.state.screen,
+                accepted.state.power_request_status,
+                accepted.completed_action,
+            ),
+        )
+        self.assertIs(UiEffect.NONE, accepted.effect)
+        self.assertFalse(
+            reduce_ui(
+                accepted.state,
+                PowerRequestAccepted(14),
+                context((value,)),
+            ).changed
+        )
+
+        failed = reduce_ui(
+            pending.state,
+            PowerRequestFailed(PowerRequestError.TIMEOUT, 13),
+            context((value,)),
+        )
+        self.assertEqual(
+            (Screen.POWER_ERROR, PowerRequestError.TIMEOUT, "power_request_failed"),
+            (
+                failed.state.screen,
+                failed.state.power_request_error,
+                failed.completed_action,
+            ),
+        )
+        self.assertIs(UiEffect.NONE, failed.effect)
+        self.assertFalse(
+            reduce_ui(
+                failed.state,
+                PowerRequestFailed(PowerRequestError.IO_ERROR, 14),
+                context((value,)),
+            ).changed
+        )
+
+    def test_phase_9_disabled_power_configuration_is_fail_closed(self) -> None:
+        system = UiState(screen=Screen.SYSTEM)
+        disabled = context((node(),), power_enabled=False)
+        for point in ((20, 50), (20, 130)):
+            transition = reduce_ui(system, ShortPress(*point, 1), disabled)
+            self.assertEqual(system, transition.state)
+            self.assertIs(UiEffect.NONE, transition.effect)
+        confirm = UiState(
+            screen=Screen.POWER_CONFIRM,
+            pending_power_action=PowerAction.REBOOT,
+        )
+        started = reduce_ui(confirm, PowerHoldStarted(1), disabled)
+        completed = reduce_ui(
+            replace(confirm, confirmation_started_at=0),
+            PowerHoldTick(10),
+            disabled,
+        )
+        self.assertEqual(confirm, started.state)
+        self.assertEqual(Screen.POWER_CONFIRM, completed.state.screen)
+        self.assertIs(UiEffect.NONE, completed.effect)
 
 
 if __name__ == "__main__":

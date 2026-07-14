@@ -117,7 +117,7 @@ POWER_HOLD_HITBOX: Rect = (
     320,
     240,
 )
-POWER_PENDING_BACK_HITBOX: Rect = (
+POWER_ERROR_BACK_HITBOX: Rect = (
     64,
     192,
     256,
@@ -302,9 +302,9 @@ def power_confirm_action_at(x: int, y: int) -> str | None:
     return None
 
 
-def power_pending_action_at(x: int, y: int) -> str | None:
-    left, top, right, bottom = POWER_PENDING_BACK_HITBOX
-    return "power_pending_back" if left <= x < right and top <= y < bottom else None
+def power_error_action_at(x: int, y: int) -> str | None:
+    left, top, right, bottom = POWER_ERROR_BACK_HITBOX
+    return "power_error_back" if left <= x < right and top <= y < bottom else None
 
 
 def map_touch(raw_x: int, raw_y: int, calibration: dict[str, Any]) -> tuple[int, int]:

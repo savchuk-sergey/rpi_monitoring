@@ -17,7 +17,7 @@ from display.navigation import (
     normalize_nodes_page,
     ordered_nodes,
     power_confirm_action_at,
-    power_pending_action_at,
+    power_error_action_at,
     selected_index,
     system_action_at,
     touch_action,
@@ -42,8 +42,22 @@ class PowerAction(Enum):
     POWEROFF = "poweroff"
 
 
+class PowerRequestError(Enum):
+    HELPER_UNAVAILABLE = "helper_unavailable"
+    PERMISSION_DENIED = "permission_denied"
+    TIMEOUT = "timeout"
+    PROTOCOL_ERROR = "protocol_error"
+    IO_ERROR = "io_error"
+
+
+class PowerRequestStatus(Enum):
+    SENDING = "sending"
+    ACCEPTED = "accepted"
+
+
 class UiEffect(Enum):
     NONE = "none"
+    REQUEST_POWER = "request_power"
 
 
 @dataclass
@@ -62,6 +76,8 @@ class UiState:
 
     pending_power_action: PowerAction | None = None
     confirmation_started_at: float | None = None
+    power_request_status: PowerRequestStatus | None = None
+    power_request_error: PowerRequestError | None = None
 
     last_interaction_at: float = 0.0
     pause_until: float = 0.0
@@ -134,6 +150,17 @@ class PowerHoldReleased:
     now: float
 
 
+@dataclass(frozen=True)
+class PowerRequestAccepted:
+    now: float
+
+
+@dataclass(frozen=True)
+class PowerRequestFailed:
+    error: PowerRequestError
+    now: float
+
+
 UiEvent = (
     ShortPress
     | LongPress
@@ -144,6 +171,8 @@ UiEvent = (
     | PowerHoldTick
     | PowerHoldCancelled
     | PowerHoldReleased
+    | PowerRequestAccepted
+    | PowerRequestFailed
 )
 
 
@@ -155,6 +184,7 @@ class UiContext:
     menu_timeout_seconds: float
     auto_rotate_seconds: float
     power_confirm_hold_seconds: float = 1.5
+    power_actions_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -201,6 +231,7 @@ def visible_action_at(
     x: int,
     y: int,
     nodes: tuple[dict[str, Any], ...] | None = None,
+    power_actions_enabled: bool = True,
 ) -> str | None:
     snapshot = (
         tuple(nodes)
@@ -234,14 +265,22 @@ def visible_action_at(
             y,
         )
     if state.screen == Screen.SYSTEM:
-        return system_action_at(x, y)
+        action = system_action_at(x, y)
+        if not power_actions_enabled and action in {
+            "system_restart",
+            "system_shutdown",
+        }:
+            return None
+        return action
     if state.screen == Screen.POWER_CONFIRM:
         action = power_confirm_action_at(x, y)
         if action == "power_hold" and state.pending_power_action is None:
             return None
         return action
     if state.screen == Screen.POWER_PENDING:
-        return power_pending_action_at(x, y)
+        return None
+    if state.screen == Screen.POWER_ERROR:
+        return power_error_action_at(x, y)
     footer_action = touch_action(x, y)
     if footer_action is not None:
         return footer_action
@@ -327,9 +366,45 @@ def reduce_ui(
 ) -> UiTransition:
     next_state = replace(state, metric_by_category=dict(state.metric_by_category))
 
+    if isinstance(event, PowerRequestAccepted):
+        if (
+            state.screen != Screen.POWER_PENDING
+            or state.power_request_status != PowerRequestStatus.SENDING
+            or state.pending_power_action is None
+        ):
+            return UiTransition(next_state)
+        next_state.power_request_status = PowerRequestStatus.ACCEPTED
+        next_state.power_request_error = None
+        next_state.last_interaction_at = event.now
+        return UiTransition(
+            next_state,
+            changed=True,
+            full_refresh=True,
+            completed_action="power_request_accepted",
+        )
+
+    if isinstance(event, PowerRequestFailed):
+        if (
+            state.screen != Screen.POWER_PENDING
+            or state.power_request_status != PowerRequestStatus.SENDING
+            or state.pending_power_action is None
+        ):
+            return UiTransition(next_state)
+        next_state.screen = Screen.POWER_ERROR
+        next_state.power_request_status = None
+        next_state.power_request_error = event.error
+        next_state.last_interaction_at = event.now
+        return UiTransition(
+            next_state,
+            changed=True,
+            full_refresh=True,
+            completed_action="power_request_failed",
+        )
+
     if isinstance(event, PowerHoldStarted):
         if (
-            state.screen != Screen.POWER_CONFIRM
+            not context.power_actions_enabled
+            or state.screen != Screen.POWER_CONFIRM
             or state.pending_power_action is None
             or state.confirmation_started_at is not None
         ):
@@ -340,7 +415,8 @@ def reduce_ui(
 
     if isinstance(event, PowerHoldTick):
         if (
-            state.screen != Screen.POWER_CONFIRM
+            not context.power_actions_enabled
+            or state.screen != Screen.POWER_CONFIRM
             or state.pending_power_action is None
             or state.confirmation_started_at is None
         ):
@@ -353,12 +429,15 @@ def reduce_ui(
             return UiTransition(next_state)
         next_state.screen = Screen.POWER_PENDING
         next_state.confirmation_started_at = None
+        next_state.power_request_status = PowerRequestStatus.SENDING
+        next_state.power_request_error = None
         next_state.last_interaction_at = event.now
         return UiTransition(
             next_state,
             changed=True,
             full_refresh=True,
             completed_action="power_confirmed",
+            effect=UiEffect.REQUEST_POWER,
         )
 
     if isinstance(event, (PowerHoldCancelled, PowerHoldReleased)):
@@ -461,6 +540,20 @@ def reduce_ui(
         return UiTransition(next_state)
 
     if isinstance(event, (ShortPress, LongPress)):
+        if (
+            state.screen == Screen.SYSTEM
+            and not context.power_actions_enabled
+            and system_action_at(event.x, event.y)
+            in {"system_restart", "system_shutdown"}
+        ):
+            return UiTransition(next_state)
+        if state.screen == Screen.POWER_PENDING:
+            return UiTransition(next_state)
+        if state.screen == Screen.POWER_ERROR:
+            if isinstance(event, LongPress):
+                return UiTransition(next_state)
+            if power_error_action_at(event.x, event.y) != "power_error_back":
+                return UiTransition(next_state)
         next_state.last_interaction_at = event.now
         next_state.pause_until = event.now + context.pause_after_touch_seconds
         node = None
@@ -477,6 +570,7 @@ def reduce_ui(
             event.x,
             event.y,
             nodes=context.nodes,
+            power_actions_enabled=context.power_actions_enabled,
         )
 
         if isinstance(event, LongPress):
@@ -501,7 +595,7 @@ def reduce_ui(
         if state.screen == Screen.SYSTEM and action in {
             "system_restart",
             "system_shutdown",
-        }:
+        } and context.power_actions_enabled:
             next_state.screen = Screen.POWER_CONFIRM
             next_state.pending_power_action = (
                 PowerAction.REBOOT
@@ -509,6 +603,8 @@ def reduce_ui(
                 else PowerAction.POWEROFF
             )
             next_state.confirmation_started_at = None
+            next_state.power_request_status = None
+            next_state.power_request_error = None
             return UiTransition(
                 next_state,
                 changed=True,
@@ -536,6 +632,8 @@ def reduce_ui(
             next_state.screen = Screen.SYSTEM
             next_state.pending_power_action = None
             next_state.confirmation_started_at = None
+            next_state.power_request_status = None
+            next_state.power_request_error = None
             return UiTransition(
                 next_state,
                 changed=True,
@@ -543,17 +641,19 @@ def reduce_ui(
                 completed_action="power_cancel",
             )
 
-        if state.screen == Screen.POWER_PENDING:
-            if action != "power_pending_back":
+        if state.screen == Screen.POWER_ERROR:
+            if action != "power_error_back":
                 return UiTransition(next_state)
             next_state.screen = Screen.SYSTEM
             next_state.pending_power_action = None
             next_state.confirmation_started_at = None
+            next_state.power_request_status = None
+            next_state.power_request_error = None
             return UiTransition(
                 next_state,
                 changed=True,
                 full_refresh=True,
-                completed_action="power_pending_back",
+                completed_action="power_error_back",
             )
 
         if state.screen == Screen.NODES and action in {
@@ -806,7 +906,7 @@ def reduce_ui(
             Screen.NODES,
             Screen.SYSTEM,
             Screen.POWER_CONFIRM,
-            Screen.POWER_PENDING,
+            Screen.POWER_ERROR,
         }:
             timeout = context.menu_timeout_seconds
         elif state.screen in {Screen.VALUES, Screen.GRAPH}:
@@ -814,10 +914,12 @@ def reduce_ui(
         else:
             return UiTransition(next_state)
         if timeout > 0 and event.now - state.last_interaction_at >= timeout:
-            if state.screen in {Screen.POWER_CONFIRM, Screen.POWER_PENDING}:
+            if state.screen in {Screen.POWER_CONFIRM, Screen.POWER_ERROR}:
                 next_state.screen = Screen.SYSTEM
                 next_state.pending_power_action = None
                 next_state.confirmation_started_at = None
+                next_state.power_request_status = None
+                next_state.power_request_error = None
                 completed_action = "timeout_system"
             else:
                 next_state.screen = Screen.OVERVIEW

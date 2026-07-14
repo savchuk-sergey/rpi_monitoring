@@ -35,7 +35,7 @@ from display.navigation import (
     POWER_CANCEL_CARD_RECT,
     POWER_HOLD_CARD_RECT,
     POWER_HOLD_PROGRESS_RECT,
-    POWER_PENDING_BACK_HITBOX,
+    POWER_ERROR_BACK_HITBOX,
     SYSTEM_BACK_HITBOX,
     SYSTEM_RESTART_CARD_RECT,
     SYSTEM_SHUTDOWN_CARD_RECT,
@@ -45,7 +45,14 @@ from display.navigation import (
     nodes_page_count,
     nodes_page_items,
 )
-from display.ui_state import PowerAction, Screen, UiState, power_hold_progress
+from display.ui_state import (
+    PowerAction,
+    PowerRequestError,
+    PowerRequestStatus,
+    Screen,
+    UiState,
+    power_hold_progress,
+)
 
 
 SIZE = (320, 240)
@@ -82,6 +89,7 @@ def render(
     local_target_name: str = "LOCAL DISPLAY",
     interaction_now: float | None = None,
     power_confirm_hold_seconds: float = 1.5,
+    power_actions_enabled: bool = True,
 ) -> Image.Image:
     state = ui_state or UiState()
     target_name = str(
@@ -104,7 +112,13 @@ def render(
         "value": _font(38),
     }
     if state.screen == Screen.SYSTEM:
-        _system(draw, fonts, target_name, pressed_action)
+        _system(
+            draw,
+            fonts,
+            target_name,
+            pressed_action,
+            power_actions_enabled,
+        )
         _system_footer(draw, fonts, pressed_action)
         return image
     if state.screen == Screen.POWER_CONFIRM:
@@ -123,7 +137,10 @@ def render(
         )
         return image
     if state.screen == Screen.POWER_PENDING:
-        _power_pending(draw, fonts, state, target_name, pressed_action)
+        _power_pending(draw, fonts, state, target_name)
+        return image
+    if state.screen == Screen.POWER_ERROR:
+        _power_error(draw, fonts, state, target_name, pressed_action)
         return image
     if state.screen == Screen.NODES:
         if snapshot:
@@ -670,6 +687,7 @@ def _system(
     fonts: dict[str, Any],
     local_target_name: str,
     pressed_action: str | None,
+    power_actions_enabled: bool,
 ) -> None:
     draw.text((10, 16), "SYSTEM", font=fonts["detail"], fill=GREEN, anchor="lm")
     draw.text(
@@ -679,36 +697,40 @@ def _system(
         fill=MUTED,
         anchor="rm",
     )
-    restart_pressed = pressed_action == "system_restart"
-    restart_color = BACKGROUND if restart_pressed else AMBER
+    restart_pressed = power_actions_enabled and pressed_action == "system_restart"
+    restart_color = (
+        BACKGROUND if restart_pressed else AMBER if power_actions_enabled else MUTED
+    )
     draw.rectangle(
         SYSTEM_RESTART_CARD_RECT,
         fill=MUTED if restart_pressed else BACKGROUND,
-        outline=AMBER,
+        outline=AMBER if power_actions_enabled else MUTED,
         width=2,
     )
     _draw_restart_icon(draw, (20, 48, 48, 76), restart_color)
     draw.text((58, 56), "RESTART", font=fonts["label"], fill=restart_color, anchor="lm")
     draw.text(
         (58, 82),
-        "TAP TO CONFIRM",
+        "TAP TO CONFIRM" if power_actions_enabled else "DISABLED BY CONFIG",
         font=fonts["small"],
         fill=restart_color,
         anchor="lm",
     )
-    shutdown_pressed = pressed_action == "system_shutdown"
-    shutdown_color = BACKGROUND if shutdown_pressed else RED
+    shutdown_pressed = power_actions_enabled and pressed_action == "system_shutdown"
+    shutdown_color = (
+        BACKGROUND if shutdown_pressed else RED if power_actions_enabled else MUTED
+    )
     draw.rectangle(
         SYSTEM_SHUTDOWN_CARD_RECT,
         fill=MUTED if shutdown_pressed else BACKGROUND,
-        outline=RED,
+        outline=RED if power_actions_enabled else MUTED,
         width=2,
     )
     _draw_shutdown_icon(draw, (20, 128, 48, 156), shutdown_color)
     draw.text((58, 136), "SHUTDOWN", font=fonts["label"], fill=shutdown_color, anchor="lm")
     draw.text(
         (58, 162),
-        "TAP TO CONFIRM",
+        "TAP TO CONFIRM" if power_actions_enabled else "DISABLED BY CONFIG",
         font=fonts["small"],
         fill=shutdown_color,
         anchor="lm",
@@ -816,15 +838,14 @@ def _power_pending(
     fonts: dict[str, Any],
     state: UiState,
     local_target_name: str,
-    pressed_action: str | None,
 ) -> None:
     action = state.pending_power_action
     if action == PowerAction.REBOOT:
-        action_title, color = "RESTART CONFIRMED", AMBER
+        action_title, color = "RESTART REQUEST", AMBER
     elif action == PowerAction.POWEROFF:
-        action_title, color = "SHUTDOWN CONFIRMED", RED
+        action_title, color = "SHUTDOWN REQUEST", RED
     else:
-        action_title, color = "NO ACTION", MUTED
+        action_title, color = "POWER REQUEST", MUTED
     draw.text((10, 16), "POWER REQUEST", font=fonts["detail"], fill=GREEN, anchor="lm")
     draw.text(
         (310, 16),
@@ -834,36 +855,83 @@ def _power_pending(
         anchor="rm",
     )
     draw.text((160, 72), action_title, font=fonts["label"], fill=color, anchor="mm")
+    if state.power_request_status == PowerRequestStatus.SENDING:
+        lines = (
+            ("SENDING REQUEST", fonts["detail"], BRIGHT),
+            ("WAITING FOR LOCAL HELPER", fonts["small"], GREEN),
+            ("PENDING FRAME DISPLAYED FIRST", fonts["tiny"], MUTED),
+        )
+    elif state.power_request_status == PowerRequestStatus.ACCEPTED:
+        lines = (
+            ("REQUEST ACCEPTED", fonts["detail"], BRIGHT),
+            ("WAITING FOR LOCAL SYSTEM", fonts["small"], GREEN),
+            ("LOCAL HELPER CONFIRMED REQUEST", fonts["tiny"], MUTED),
+        )
+    else:
+        lines = (("REQUEST STATE UNKNOWN", fonts["detail"], MUTED),)
+    for y, (text, font, fill) in zip((112, 142, 170), lines):
+        draw.text((160, y), text, font=font, fill=fill, anchor="mm")
+
+
+def _power_error(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    state: UiState,
+    local_target_name: str,
+    pressed_action: str | None,
+) -> None:
+    if state.pending_power_action == PowerAction.REBOOT:
+        action_title, color = "RESTART REQUEST FAILED", AMBER
+    elif state.pending_power_action == PowerAction.POWEROFF:
+        action_title, color = "SHUTDOWN REQUEST FAILED", RED
+    else:
+        action_title, color = "POWER REQUEST FAILED", MUTED
+    error_labels = {
+        PowerRequestError.HELPER_UNAVAILABLE: "HELPER UNAVAILABLE",
+        PowerRequestError.PERMISSION_DENIED: "PERMISSION DENIED",
+        PowerRequestError.TIMEOUT: "REQUEST TIMED OUT",
+        PowerRequestError.PROTOCOL_ERROR: "INVALID HELPER RESPONSE",
+        PowerRequestError.IO_ERROR: "LOCAL I/O ERROR",
+    }
+    error_label = (
+        error_labels[state.power_request_error]
+        if state.power_request_error is not None
+        else "UNKNOWN LOCAL ERROR"
+    )
+
+    draw.text((10, 16), "POWER ERROR", font=fonts["detail"], fill=RED, anchor="lm")
     draw.text(
-        (160, 112),
-        "EXECUTION DISABLED",
-        font=fonts["detail"],
+        (310, 16),
+        _fit(draw, local_target_name.upper(), fonts["small"], 150),
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="rm",
+    )
+    draw.text((160, 62), action_title, font=fonts["label"], fill=color, anchor="mm")
+    draw.text((160, 98), error_label, font=fonts["detail"], fill=RED, anchor="mm")
+    draw.text(
+        (160, 132),
+        "NO ACCEPTANCE RECEIVED",
+        font=fonts["small"],
         fill=BRIGHT,
         anchor="mm",
     )
     draw.text(
-        (160, 142),
-        "NO COMMAND WAS SENT",
+        (160, 162),
+        "CHECK LOCAL POWER HELPER",
         font=fonts["small"],
-        fill=GREEN,
-        anchor="mm",
-    )
-    draw.text(
-        (160, 170),
-        "PHASE 9 REQUIRED FOR EXECUTION",
-        font=fonts["tiny"],
         fill=MUTED,
         anchor="mm",
     )
     draw.line((0, 192, 319, 192), fill=MUTED)
-    pressed = pressed_action == "power_pending_back"
+    pressed = pressed_action == "power_error_back"
     if pressed:
         draw.rectangle(
             (
-                POWER_PENDING_BACK_HITBOX[0],
-                POWER_PENDING_BACK_HITBOX[1],
-                POWER_PENDING_BACK_HITBOX[2] - 1,
-                POWER_PENDING_BACK_HITBOX[3] - 1,
+                POWER_ERROR_BACK_HITBOX[0],
+                POWER_ERROR_BACK_HITBOX[1],
+                POWER_ERROR_BACK_HITBOX[2] - 1,
+                POWER_ERROR_BACK_HITBOX[3] - 1,
             ),
             fill=MUTED,
         )

@@ -12,15 +12,23 @@ from display.drivers.xpt2046 import XPT2046
 from display.gestures import GestureKind, GestureState, TouchRecognizer
 from display.history import HistoryStore
 from display.navigation import map_touch, power_confirm_action_at, selected_index
+from display.power_client import (
+    DEFAULT_POWER_SOCKET,
+    request_power_action,
+    validate_power_socket_path,
+)
 from display.ui_state import (
     AutoRotateTick,
     DataRefreshed,
     InactivityTick,
     LongPress,
+    PowerAction,
     PowerHoldCancelled,
     PowerHoldReleased,
     PowerHoldStarted,
     PowerHoldTick,
+    PowerRequestAccepted,
+    PowerRequestFailed,
     Screen,
     ShortPress,
     UiContext,
@@ -51,6 +59,19 @@ async def run(config: dict) -> None:
         raise ValueError(
             "power_confirm_hold_seconds must be positive"
         )
+    configured_power_enabled = config.get(
+        "power_actions_enabled",
+        False,
+    )
+    if not isinstance(configured_power_enabled, bool):
+        raise ValueError("power_actions_enabled must be a boolean")
+    power_actions_enabled = configured_power_enabled
+    power_socket = validate_power_socket_path(
+        config.get(
+            "power_socket",
+            DEFAULT_POWER_SOCKET,
+        )
+    )
     calibration = json.loads(Path(config["calibration_file"]).read_text())
     lcd = ILI9341(int(config.get("lcd_speed_hz", 4_000_000)))
     touch = XPT2046(int(config.get("touch_speed_hz", 2_000_000)))
@@ -80,8 +101,12 @@ async def run(config: dict) -> None:
     detail_timeout = max(0.0, float(config.get("detail_timeout_seconds", 45)))
     menu_timeout = max(0.0, float(config.get("menu_timeout_seconds", 15)))
     signature = ""
+    queued_power_effect: tuple[UiEffect, PowerAction] | None = None
     lcd.initialize()
-    last_frame = render(None)
+    last_frame = render(
+        None,
+        power_actions_enabled=power_actions_enabled,
+    )
     lcd.show(last_frame)
     timeout = aiohttp.ClientTimeout(total=2)
     next_refresh = 0.0
@@ -92,6 +117,36 @@ async def run(config: dict) -> None:
                 changed = False
                 full_refresh = False
                 completed_action: str | None = None
+                power_frame_presented = False
+
+                def apply_transition(transition) -> None:
+                    nonlocal state
+                    nonlocal changed
+                    nonlocal full_refresh
+                    nonlocal completed_action
+                    nonlocal queued_power_effect
+
+                    state = transition.state
+                    changed |= transition.changed
+                    full_refresh |= transition.full_refresh
+                    if transition.completed_action is not None:
+                        completed_action = transition.completed_action
+                    if transition.effect is UiEffect.NONE:
+                        return
+                    if transition.effect is not UiEffect.REQUEST_POWER:
+                        raise AssertionError(
+                            f"unknown UI effect: {transition.effect!r}"
+                        )
+                    if state.pending_power_action is None:
+                        raise AssertionError(
+                            "power request effect requires an action"
+                        )
+                    if queued_power_effect is not None:
+                        raise AssertionError("multiple UI effects queued")
+                    queued_power_effect = (
+                        transition.effect,
+                        state.pending_power_action,
+                    )
                 if now >= next_refresh:
                     try:
                         async with session.get(config["state_url"]) as response:
@@ -109,18 +164,14 @@ async def run(config: dict) -> None:
                         menu_timeout,
                         auto_rotate,
                         power_confirm_hold_seconds,
+                        power_actions_enabled=power_actions_enabled,
                     )
                     transition = reduce_ui(
                         state,
                         DataRefreshed(tuple(nodes), hub_online, now),
                         context,
                     )
-                    state = transition.state
-                    changed |= transition.changed
-                    full_refresh |= transition.full_refresh
-                    if transition.completed_action is not None:
-                        completed_action = transition.completed_action
-                    assert transition.effect is UiEffect.NONE
+                    apply_transition(transition)
                     next_refresh = now + 0.5
 
                 context = UiContext(
@@ -130,6 +181,7 @@ async def run(config: dict) -> None:
                     menu_timeout,
                     auto_rotate,
                     power_confirm_hold_seconds,
+                    power_actions_enabled=power_actions_enabled,
                 )
                 gesture = None
                 if touch.pressed:
@@ -151,6 +203,7 @@ async def run(config: dict) -> None:
                             x,
                             y,
                             tuple(nodes),
+                            power_actions_enabled=power_actions_enabled,
                         )
                         feedback_pending = pressed_action is not None
                         changed |= feedback_pending
@@ -163,12 +216,7 @@ async def run(config: dict) -> None:
                                 PowerHoldStarted(now),
                                 context,
                             )
-                            state = transition.state
-                            changed |= transition.changed
-                            full_refresh |= transition.full_refresh
-                            if transition.completed_action is not None:
-                                completed_action = transition.completed_action
-                            assert transition.effect is UiEffect.NONE
+                            apply_transition(transition)
                     if (
                         pressed_action == "power_hold"
                         and state.screen == Screen.POWER_CONFIRM
@@ -182,12 +230,7 @@ async def run(config: dict) -> None:
                                 PowerHoldTick(now),
                                 context,
                             )
-                            state = transition.state
-                            changed |= transition.changed
-                            full_refresh |= transition.full_refresh
-                            if transition.completed_action is not None:
-                                completed_action = transition.completed_action
-                            assert transition.effect is UiEffect.NONE
+                            apply_transition(transition)
                             if state.screen == Screen.POWER_PENDING:
                                 recognizer.consume_current_press()
                                 gesture = None
@@ -199,12 +242,7 @@ async def run(config: dict) -> None:
                                 PowerHoldCancelled(now),
                                 context,
                             )
-                            state = transition.state
-                            changed |= transition.changed
-                            full_refresh |= transition.full_refresh
-                            if transition.completed_action is not None:
-                                completed_action = transition.completed_action
-                            assert transition.effect is UiEffect.NONE
+                            apply_transition(transition)
                             pressed_action = None
                             feedback_pending = False
                     elif recognizer.state == GestureState.WAIT_RELEASE and pressed_action:
@@ -223,12 +261,7 @@ async def run(config: dict) -> None:
                             PowerHoldReleased(now),
                             context,
                         )
-                        state = transition.state
-                        changed |= transition.changed
-                        full_refresh |= transition.full_refresh
-                        if transition.completed_action is not None:
-                            completed_action = transition.completed_action
-                        assert transition.effect is UiEffect.NONE
+                        apply_transition(transition)
                     if pressed_action:
                         pressed_action = None
                         changed = True
@@ -240,24 +273,14 @@ async def run(config: dict) -> None:
                         else ShortPress(gesture.x, gesture.y, now)
                     )
                     transition = reduce_ui(state, event, context)
-                    state = transition.state
-                    changed |= transition.changed
-                    full_refresh |= transition.full_refresh
-                    if transition.completed_action is not None:
-                        completed_action = transition.completed_action
-                    assert transition.effect is UiEffect.NONE
+                    apply_transition(transition)
 
                 transition = reduce_ui(
                     state,
                     InactivityTick(now, touch.pressed),
                     context,
                 )
-                state = transition.state
-                changed |= transition.changed
-                full_refresh |= transition.full_refresh
-                if transition.completed_action is not None:
-                    completed_action = transition.completed_action
-                assert transition.effect is UiEffect.NONE
+                apply_transition(transition)
 
                 if gesture and completed_action is None:
                     touch_started = None
@@ -270,12 +293,7 @@ async def run(config: dict) -> None:
                     ),
                     context,
                 )
-                state = transition.state
-                changed |= transition.changed
-                full_refresh |= transition.full_refresh
-                if transition.completed_action is not None:
-                    completed_action = transition.completed_action
-                assert transition.effect is UiEffect.NONE
+                apply_transition(transition)
 
                 state_signature = json.dumps(
                     (
@@ -291,6 +309,17 @@ async def run(config: dict) -> None:
                         local_target_name,
                         state.pending_power_action.value if state.pending_power_action else None,
                         state.confirmation_started_at,
+                        (
+                            state.power_request_status.value
+                            if state.power_request_status
+                            else None
+                        ),
+                        (
+                            state.power_request_error.value
+                            if state.power_request_error
+                            else None
+                        ),
+                        power_actions_enabled,
                         power_confirm_hold_seconds,
                         round(
                             power_hold_progress(
@@ -324,12 +353,15 @@ async def run(config: dict) -> None:
                         local_target_name=local_target_name,
                         interaction_now=now,
                         power_confirm_hold_seconds=power_confirm_hold_seconds,
+                        power_actions_enabled=power_actions_enabled,
                     )
                     render_ms = (loop.time() - render_started) * 1000
                     box = ImageChops.difference(last_frame, frame).getbbox()
                     if box:
                         if full_refresh:
                             lcd.show(frame)
+                            if queued_power_effect is not None:
+                                power_frame_presented = True
                             box = (0, 0, 320, 240)
                         else:
                             lcd.show_region(frame, box)
@@ -359,6 +391,42 @@ async def run(config: dict) -> None:
                         )
                         touch_started = None
                     signature = state_signature
+                if queued_power_effect is not None:
+                    effect, captured_action = queued_power_effect
+                    if effect is not UiEffect.REQUEST_POWER:
+                        raise AssertionError(f"unknown queued effect: {effect!r}")
+                    if not power_frame_presented:
+                        raise RuntimeError(
+                            "power pending frame was not presented"
+                        )
+                    try:
+                        result = await request_power_action(
+                            power_socket,
+                            captured_action,
+                        )
+                        LOG.info(
+                            "power_request action=%s result=%s",
+                            captured_action.value,
+                            (
+                                "accepted"
+                                if result.accepted
+                                else result.error.value
+                            ),
+                        )
+                        result_now = loop.time()
+                        if result.accepted:
+                            result_event = PowerRequestAccepted(result_now)
+                        else:
+                            assert result.error is not None
+                            result_event = PowerRequestFailed(
+                                result.error,
+                                result_now,
+                            )
+                        apply_transition(
+                            reduce_ui(state, result_event, context)
+                        )
+                    finally:
+                        queued_power_effect = None
                 await asyncio.sleep(0.02)
     finally:
         touch.close()

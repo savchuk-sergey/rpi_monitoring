@@ -1,16 +1,18 @@
 import copy
 import hashlib
 import asyncio
+import json
 import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFont
 
 from display.drivers.ili9341 import ILI9341, rgb565
 from display.app import run as run_display
+from display.power_client import PowerClientResult
 from display.categories import CATEGORIES, category, category_at, detail_view_at, metric_at
 from display.gestures import GestureKind, GestureState, TouchRecognizer
 from display.history import HistoryStore
@@ -38,7 +40,7 @@ from display.navigation import (
     POWER_HOLD_CARD_RECT,
     POWER_HOLD_HITBOX,
     POWER_HOLD_PROGRESS_RECT,
-    POWER_PENDING_BACK_HITBOX,
+    POWER_ERROR_BACK_HITBOX,
     PREVIOUS_HITBOX,
     SYSTEM_BACK_HITBOX,
     SYSTEM_RESTART_AREA,
@@ -60,7 +62,7 @@ from display.navigation import (
     normalize_nodes_page,
     ordered_nodes,
     power_confirm_action_at,
-    power_pending_action_at,
+    power_error_action_at,
     selected_index,
     system_action_at,
     touch_action,
@@ -105,11 +107,15 @@ from display.ui_state import (
     PowerAction,
     PowerHoldStarted,
     PowerHoldTick,
+    PowerRequestAccepted,
+    PowerRequestError,
+    PowerRequestStatus,
     ShortPress,
     Screen,
     UiContext,
     UiEffect,
     UiState,
+    UiTransition,
     reduce_ui,
     visible_action_at,
 )
@@ -207,12 +213,26 @@ CONFIRMATION_RENDER_HASHES = {
 }
 
 PENDING_RENDER_HASHES = {
-    "pending_reboot": "ca4aaed9263d76c8f7bd4d54a00a6bd16c40ae0e5ec17baefceede530de5f663",
-    "pending_shutdown": "497ed043b827813e8d379c32377a0d1175b1cd3c52d0cc6556746cad87e28067",
-    "pending_reboot_back_pressed": "c4a92498dbbbbe07bd0c9bba5a6ca815d146d4b1d3919a4df1b081fcf9dddc35",
-    "pending_shutdown_back_pressed": "e0c2405cc8cad24fa6a6f4f879df58762cd735bf24dac44e6cdc8020d5f0f967",
-    "pending_missing_action": "76ec27b4ee3316603614c5b49933aa0058b72512bbd77585fe4c014cfa335ff7",
+    "pending_reboot_sending": "51a2647f61590e59adc403fbd6aeb7498c686f0de1f695defaf69ea9ac8ceb86",
+    "pending_shutdown_sending": "9fd965f0d0b402618a6429ec391b98c5c1c9ebdb57db3899de41996e093cbbc2",
+    "pending_reboot_accepted": "2da17703e345d4a06f03516c8810623d369e332b1723d37581382c56acc86536",
+    "pending_shutdown_accepted": "52b840fb45a68ed63ae6b3ccbf312348d602d4b1a1481ff7fab5584aa2f0fbb7",
+    "pending_missing_status": "062bf4c45e5f04880e23b9fcb8981f43de250e8214ac300152f5bbb17aa23a50",
 }
+
+POWER_ERROR_RENDER_HASHES = {
+    "error_reboot_helper_unavailable": "58bf1211f829d159aeef78e770f31742b7d0212c3edafb1800982a1105c94f4a",
+    "error_shutdown_permission_denied": "d1621aecb7aafddc1ea9a83c2e828cb509f1d75341e6901d3ffd0ee1fb463a12",
+    "error_reboot_timeout": "d64242b38e108aa235e774e3a39888c35e9d621057f3854495551587dc22b2fb",
+    "error_shutdown_protocol": "00e98cfcf946ed30f800f56988629a5d9325dc90a9cb5eaf96dbf81850c85ec6",
+    "error_reboot_io": "81b584d5a1c38f09c096e017c00b9005810e62c45f918d9fb1e3510b762c5de8",
+    "error_missing_code": "81ba60f9f0768cf416876c4eb19d39c07dbe77d51e888a14ecda05e81b9ebc5b",
+    "error_back_pressed": "724a09bef6519eed17a65cf6bbadb4c35275add3939a009ea13042a53e85847e",
+}
+
+SYSTEM_POWER_DISABLED_HASH = (
+    "78cdffb961019c47414fbab3a1794e6e851210c0c4e0da6f7b06fe3d6b9f5517"
+)
 
 OLD_GRAPH_HASHES = {
     "graph_fullscreen_collecting": "66b0364742250623eb4d2522b1ac07a168c503658b16c1f00c84e92b565311ff",
@@ -995,8 +1015,10 @@ class DisplayTests(unittest.TestCase):
         for screen in (Screen.POWER_CONFIRM, Screen.POWER_PENDING):
             self.assertEqual((320, 240), render(node(), ui_state=UiState(screen=screen)).size)
             self.assertEqual((320, 240), render(None, ui_state=UiState(screen=screen)).size)
-        with self.assertRaises(ValueError):
-            render(node(), ui_state=UiState(screen=Screen.POWER_ERROR))
+        self.assertEqual(
+            (320, 240),
+            render(node(), ui_state=UiState(screen=Screen.POWER_ERROR)).size,
+        )
         self.assertEqual((320, 240), render(None, ui_state=UiState(screen=Screen.POWER_ERROR)).size)
 
     def test_renderer_does_not_mutate_ui_state(self) -> None:
@@ -2089,7 +2111,7 @@ class DisplayTests(unittest.TestCase):
 
         self.assertEqual((0, 192, 112, 240), POWER_CANCEL_HITBOX)
         self.assertEqual((112, 192, 320, 240), POWER_HOLD_HITBOX)
-        self.assertEqual((64, 192, 256, 240), POWER_PENDING_BACK_HITBOX)
+        self.assertEqual((64, 192, 256, 240), POWER_ERROR_BACK_HITBOX)
         self.assertEqual((0, 192, 111, 239), POWER_CANCEL_CARD_RECT)
         self.assertEqual((112, 192, 319, 239), POWER_HOLD_CARD_RECT)
         self.assertEqual((124, 228, 308, 236), POWER_HOLD_PROGRESS_RECT)
@@ -2110,10 +2132,10 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(("power_cancel", "power_hold"), (
             power_confirm_action_at(0, 192), power_confirm_action_at(319, 239)
         ))
-        self.assertEqual("power_pending_back", power_pending_action_at(64, 192))
+        self.assertEqual("power_error_back", power_error_action_at(64, 192))
         for resolver, points in (
             (power_confirm_action_at, ((-1, 210), (320, 210), (10, 191), (10, 240))),
-            (power_pending_action_at, ((63, 210), (256, 210), (160, 191), (160, 240))),
+            (power_error_action_at, ((63, 210), (256, 210), (160, 191), (160, 240))),
         ):
             for point in points:
                 self.assertIsNone(resolver(*point))
@@ -2247,11 +2269,55 @@ class DisplayTests(unittest.TestCase):
             scenarios["system_hub_offline"].tobytes(),
         )
 
+    def test_phase_9_disabled_system_is_muted_and_has_no_power_feedback(self) -> None:
+        state = UiState(screen=Screen.SYSTEM)
+        disabled = render(None, ui_state=state, power_actions_enabled=False)
+        self.assertEqual(
+            SYSTEM_POWER_DISABLED_HASH,
+            hashlib.sha256(disabled.tobytes()).hexdigest(),
+        )
+        for action in ("system_restart", "system_shutdown"):
+            self.assertEqual(
+                disabled.tobytes(),
+                render(
+                    None,
+                    ui_state=state,
+                    pressed_action=action,
+                    power_actions_enabled=False,
+                ).tobytes(),
+            )
+        self.assertNotEqual(
+            disabled.tobytes(),
+            render(
+                None,
+                ui_state=state,
+                pressed_action="system_back",
+                power_actions_enabled=False,
+            ).tobytes(),
+        )
+        calls = []
+        original = ImageDraw.ImageDraw.text
+
+        def record(draw, xy, text, *args, **kwargs):
+            calls.append((text, kwargs.get("fill")))
+            return original(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record):
+            render(None, ui_state=state, power_actions_enabled=False)
+        self.assertEqual(2, sum(text == "DISABLED BY CONFIG" for text, _ in calls))
+        self.assertTrue(
+            all(fill == MUTED for text, fill in calls if text == "DISABLED BY CONFIG")
+        )
+
     def test_phase_8_confirmation_pending_routing_progress_and_target_isolation(self) -> None:
         value_a = node(node_id="a", display_name="REMOTE A")
         value_b = node(node_id="b", display_name="REMOTE B")
         confirm = UiState(screen=Screen.POWER_CONFIRM, pending_power_action=PowerAction.REBOOT)
-        pending = UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT)
+        pending = UiState(
+            screen=Screen.POWER_PENDING,
+            pending_power_action=PowerAction.REBOOT,
+            power_request_status=PowerRequestStatus.SENDING,
+        )
         blocked_helpers = (
             "_empty_state", "_header", "_footer", "_menu", "_nodes",
             "_detail_header", "_values_detail", "_graph_footer",
@@ -2327,21 +2393,17 @@ class DisplayTests(unittest.TestCase):
             render(None, ui_state=pending, local_target_name="display-rpi")
         rendered = {text for _, text, _ in text_calls}
         for required in (
-            "EXECUTION DISABLED",
-            "NO COMMAND WAS SENT",
-            "PHASE 9 REQUIRED FOR EXECUTION",
+            "SENDING REQUEST",
+            "WAITING FOR LOCAL HELPER",
+            "PENDING FRAME DISPLAYED FIRST",
         ):
             self.assertIn(required, rendered)
         self.assertNotIn("REMOTE A", rendered)
+        self.assertNotIn("BACK", rendered)
 
         normal_pending = render(None, ui_state=pending)
         pressed_pending = render(None, ui_state=pending, pressed_action="power_pending_back")
-        difference = ImageChops.difference(normal_pending, pressed_pending).getbbox()
-        self.assertIsNotNone(difference)
-        self.assertGreaterEqual(difference[0], POWER_PENDING_BACK_HITBOX[0])
-        self.assertGreaterEqual(difference[1], POWER_PENDING_BACK_HITBOX[1])
-        self.assertLessEqual(difference[2], POWER_PENDING_BACK_HITBOX[2])
-        self.assertLessEqual(difference[3], POWER_PENDING_BACK_HITBOX[3])
+        self.assertEqual(normal_pending.tobytes(), pressed_pending.tobytes())
 
     def test_phase_8_confirmation_and_pending_hashes_are_exact(self) -> None:
         reboot = UiState(screen=Screen.POWER_CONFIRM, pending_power_action=PowerAction.REBOOT)
@@ -2380,17 +2442,71 @@ class DisplayTests(unittest.TestCase):
         )
 
         pending = {
-            "pending_reboot": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT), local_target_name="display-rpi"),
-            "pending_shutdown": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.POWEROFF), local_target_name="display-rpi"),
-            "pending_reboot_back_pressed": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT), pressed_action="power_pending_back", local_target_name="display-rpi"),
-            "pending_shutdown_back_pressed": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.POWEROFF), pressed_action="power_pending_back", local_target_name="display-rpi"),
-            "pending_missing_action": render(None, ui_state=UiState(screen=Screen.POWER_PENDING), local_target_name="display-rpi"),
+            "pending_reboot_sending": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT, power_request_status=PowerRequestStatus.SENDING), local_target_name="display-rpi"),
+            "pending_shutdown_sending": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.POWEROFF, power_request_status=PowerRequestStatus.SENDING), local_target_name="display-rpi"),
+            "pending_reboot_accepted": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT, power_request_status=PowerRequestStatus.ACCEPTED), local_target_name="display-rpi"),
+            "pending_shutdown_accepted": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.POWEROFF, power_request_status=PowerRequestStatus.ACCEPTED), local_target_name="display-rpi"),
+            "pending_missing_status": render(None, ui_state=UiState(screen=Screen.POWER_PENDING), local_target_name="display-rpi"),
         }
         self.assertEqual(set(PENDING_RENDER_HASHES), set(pending))
         for name, image in pending.items():
             self.assertEqual(PENDING_RENDER_HASHES[name], hashlib.sha256(image.tobytes()).hexdigest())
 
-    def test_phase_8_application_integrates_hold_without_power_execution(self) -> None:
+        errors = {
+            "error_reboot_helper_unavailable": render(None, ui_state=UiState(screen=Screen.POWER_ERROR, pending_power_action=PowerAction.REBOOT, power_request_error=PowerRequestError.HELPER_UNAVAILABLE), local_target_name="display-rpi"),
+            "error_shutdown_permission_denied": render(None, ui_state=UiState(screen=Screen.POWER_ERROR, pending_power_action=PowerAction.POWEROFF, power_request_error=PowerRequestError.PERMISSION_DENIED), local_target_name="display-rpi"),
+            "error_reboot_timeout": render(None, ui_state=UiState(screen=Screen.POWER_ERROR, pending_power_action=PowerAction.REBOOT, power_request_error=PowerRequestError.TIMEOUT), local_target_name="display-rpi"),
+            "error_shutdown_protocol": render(None, ui_state=UiState(screen=Screen.POWER_ERROR, pending_power_action=PowerAction.POWEROFF, power_request_error=PowerRequestError.PROTOCOL_ERROR), local_target_name="display-rpi"),
+            "error_reboot_io": render(None, ui_state=UiState(screen=Screen.POWER_ERROR, pending_power_action=PowerAction.REBOOT, power_request_error=PowerRequestError.IO_ERROR), local_target_name="display-rpi"),
+            "error_missing_code": render(None, ui_state=UiState(screen=Screen.POWER_ERROR), local_target_name="display-rpi"),
+            "error_back_pressed": render(None, ui_state=UiState(screen=Screen.POWER_ERROR, pending_power_action=PowerAction.REBOOT, power_request_error=PowerRequestError.IO_ERROR), pressed_action="power_error_back", local_target_name="display-rpi"),
+        }
+        self.assertEqual(set(POWER_ERROR_RENDER_HASHES), set(errors))
+        for name, image in errors.items():
+            self.assertEqual(
+                POWER_ERROR_RENDER_HASHES[name],
+                hashlib.sha256(image.tobytes()).hexdigest(),
+            )
+
+    def test_phase_9_error_wording_mapping_and_target_isolation(self) -> None:
+        expected = {
+            PowerRequestError.HELPER_UNAVAILABLE: "HELPER UNAVAILABLE",
+            PowerRequestError.PERMISSION_DENIED: "PERMISSION DENIED",
+            PowerRequestError.TIMEOUT: "REQUEST TIMED OUT",
+            PowerRequestError.PROTOCOL_ERROR: "INVALID HELPER RESPONSE",
+            PowerRequestError.IO_ERROR: "LOCAL I/O ERROR",
+            None: "UNKNOWN LOCAL ERROR",
+        }
+        original = ImageDraw.ImageDraw.text
+        for error, label in expected.items():
+            calls = []
+
+            def record(draw, xy, text, *args, **kwargs):
+                calls.append(text)
+                return original(draw, xy, text, *args, **kwargs)
+
+            with self.subTest(error=error), patch.object(
+                ImageDraw.ImageDraw,
+                "text",
+                new=record,
+            ):
+                render(
+                    node(display_name="REMOTE SECRET"),
+                    ui_state=UiState(
+                        screen=Screen.POWER_ERROR,
+                        pending_power_action=PowerAction.REBOOT,
+                        power_request_error=error,
+                    ),
+                    local_target_name="display-rpi",
+                )
+            self.assertIn(label, calls)
+            self.assertIn("NO ACCEPTANCE RECEIVED", calls)
+            self.assertIn("CHECK LOCAL POWER HELPER", calls)
+            self.assertIn("BACK", calls)
+            self.assertNotIn("NO COMMAND WAS SENT", calls)
+            self.assertNotIn("REMOTE SECRET", calls)
+
+    def test_phase_9_application_integrates_power_effect_dispatch(self) -> None:
         app_source = Path("display/app.py").read_text()
         self.assertIn('config.get("local_node_id")', app_source)
         self.assertIn('or "LOCAL DISPLAY"', app_source)
@@ -2410,11 +2526,213 @@ class DisplayTests(unittest.TestCase):
         display_source = "\n".join(
             path.read_text() for path in Path("display").glob("*.py")
         )
-        for forbidden in ("subprocess", "os.system", "socket", "systemctl", "power.sock", "AF_UNIX"):
+        self.assertIn("request_power_action(", app_source)
+        self.assertIn("PowerRequestAccepted", app_source)
+        self.assertIn("PowerRequestFailed", app_source)
+        self.assertIn("power_actions_enabled must be a boolean", app_source)
+        for forbidden in ("subprocess", "os.system", "systemctl", "AF_UNIX"):
             self.assertNotIn(forbidden, display_source)
         hub_source = Path("hub/app.py").read_text()
         self.assertNotIn('"/api/v1/power', hub_source)
         self.assertNotIn('"/power', hub_source)
+
+    def test_phase_9_application_shows_pending_frame_before_one_request(self) -> None:
+        calls = []
+        result_events = []
+
+        class FakeLcd:
+            last_timing_ms = (0, 0)
+
+            def __init__(self, speed):
+                pass
+
+            def initialize(self):
+                pass
+
+            def show(self, image):
+                calls.append(("show", image.getpixel((0, 0))))
+
+            def show_region(self, image, box):
+                calls.append(("show_region", image.getpixel((0, 0))))
+
+            def close(self):
+                pass
+
+        class FakeTouch:
+            pressed = False
+
+            def __init__(self, speed):
+                pass
+
+            def close(self):
+                pass
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def get(self, url):
+                raise KeyError(url)
+
+        def fake_render(*args, **kwargs):
+            state = args[3] if len(args) > 3 else kwargs.get("ui_state")
+            pending = (
+                state is not None
+                and state.screen == Screen.POWER_PENDING
+                and state.power_request_status == PowerRequestStatus.SENDING
+            )
+            calls.append(("render", "pending" if pending else "other"))
+            return Image.new("RGB", (320, 240), "white" if pending else "black")
+
+        def fake_reduce(state, event, context):
+            if isinstance(event, DataRefreshed):
+                return UiTransition(
+                    replace(
+                        state,
+                        screen=Screen.POWER_PENDING,
+                        pending_power_action=PowerAction.REBOOT,
+                        power_request_status=PowerRequestStatus.SENDING,
+                    ),
+                    changed=True,
+                    full_refresh=True,
+                    effect=UiEffect.REQUEST_POWER,
+                )
+            if isinstance(event, PowerRequestAccepted):
+                result_events.append(event)
+                return UiTransition(
+                    replace(
+                        state,
+                        power_request_status=PowerRequestStatus.ACCEPTED,
+                    ),
+                    changed=True,
+                    full_refresh=True,
+                )
+            return UiTransition(state)
+
+        async def fake_request(socket_path, action):
+            calls.append(("request", action))
+            return PowerClientResult(accepted=True)
+
+        config = {
+            "calibration_file": "ignored.json",
+            "power_actions_enabled": True,
+            "state_url": "http://unused",
+        }
+        calibration = json.dumps({
+            "raw_x_min": 0,
+            "raw_x_max": 1,
+            "raw_y_min": 0,
+            "raw_y_max": 1,
+        })
+        with patch("display.app.ILI9341", FakeLcd), patch(
+            "display.app.XPT2046", FakeTouch
+        ), patch("display.app.render", side_effect=fake_render), patch(
+            "display.app.reduce_ui", side_effect=fake_reduce
+        ), patch(
+            "display.app.request_power_action", side_effect=fake_request
+        ) as request, patch(
+            "display.app.aiohttp.ClientSession", return_value=FakeSession()
+        ), patch(
+            "display.app.Path.read_text", return_value=calibration
+        ), patch(
+            "display.app.asyncio.sleep",
+            new=AsyncMock(side_effect=StopAsyncIteration),
+        ):
+            with self.assertRaises(StopAsyncIteration):
+                asyncio.run(run_display(config))
+
+        pending_render = calls.index(("render", "pending"))
+        pending_show = calls.index(("show", (255, 255, 255)))
+        request_call = calls.index(("request", PowerAction.REBOOT))
+        self.assertLess(pending_render, pending_show)
+        self.assertLess(pending_show, request_call)
+        request.assert_awaited_once()
+        self.assertEqual(1, len(result_events))
+
+    def test_phase_9_application_does_not_request_when_pending_show_fails(self) -> None:
+        class FailingLcd:
+            last_timing_ms = (0, 0)
+
+            def __init__(self, speed):
+                self.show_count = 0
+
+            def initialize(self):
+                pass
+
+            def show(self, image):
+                self.show_count += 1
+                if self.show_count == 2:
+                    raise RuntimeError("display failed")
+
+            def show_region(self, image, box):
+                raise AssertionError("full pending frame required")
+
+            def close(self):
+                pass
+
+        class FakeTouch:
+            pressed = False
+
+            def __init__(self, speed):
+                pass
+
+            def close(self):
+                pass
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def get(self, url):
+                raise KeyError(url)
+
+        def fake_reduce(state, event, context):
+            if isinstance(event, DataRefreshed):
+                return UiTransition(
+                    replace(
+                        state,
+                        screen=Screen.POWER_PENDING,
+                        pending_power_action=PowerAction.REBOOT,
+                        power_request_status=PowerRequestStatus.SENDING,
+                    ),
+                    changed=True,
+                    full_refresh=True,
+                    effect=UiEffect.REQUEST_POWER,
+                )
+            return UiTransition(state)
+
+        def fake_render(*args, **kwargs):
+            state = args[3] if len(args) > 3 else kwargs.get("ui_state")
+            color = "white" if state and state.screen == Screen.POWER_PENDING else "black"
+            return Image.new("RGB", (320, 240), color)
+
+        request = AsyncMock(return_value=PowerClientResult(accepted=True))
+        calibration = json.dumps({
+            "raw_x_min": 0,
+            "raw_x_max": 1,
+            "raw_y_min": 0,
+            "raw_y_max": 1,
+        })
+        with patch("display.app.ILI9341", FailingLcd), patch(
+            "display.app.XPT2046", FakeTouch
+        ), patch("display.app.render", side_effect=fake_render), patch(
+            "display.app.reduce_ui", side_effect=fake_reduce
+        ), patch("display.app.request_power_action", new=request), patch(
+            "display.app.aiohttp.ClientSession", return_value=FakeSession()
+        ), patch("display.app.Path.read_text", return_value=calibration):
+            with self.assertRaisesRegex(RuntimeError, "display failed"):
+                asyncio.run(run_display({
+                    "calibration_file": "ignored.json",
+                    "power_actions_enabled": True,
+                    "state_url": "http://unused",
+                }))
+        request.assert_not_awaited()
 
     def test_completed_fast_power_hold_consumes_release_at_every_hold_coordinate(self) -> None:
         for point in ((216, 210), (150, 210), (300, 210)):
@@ -2451,7 +2769,7 @@ class DisplayTests(unittest.TestCase):
                         completed.completed_action,
                     ),
                 )
-                self.assertIs(UiEffect.NONE, completed.effect)
+                self.assertIs(UiEffect.REQUEST_POWER, completed.effect)
                 self.assertIsNone(recognizer.update(True, *point, 0.22))
                 self.assertEqual(GestureState.IDLE, recognizer.state)
 
@@ -2464,6 +2782,24 @@ class DisplayTests(unittest.TestCase):
                 asyncio.run(run_display({"power_confirm_hold_seconds": value}))
         with self.assertRaises(KeyError):
             asyncio.run(run_display({"power_confirm_hold_seconds": 0.1}))
+
+    def test_phase_9_application_validates_power_configuration_before_hardware(self) -> None:
+        for value in ("false", 0, 1, None, [], {}):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError,
+                "power_actions_enabled must be a boolean",
+            ):
+                asyncio.run(run_display({"power_actions_enabled": value}))
+        for value in ("relative.sock", "/run/homelab-resource-monitor"):
+            with self.subTest(socket=value), self.assertRaises(ValueError):
+                asyncio.run(run_display({"power_socket": value}))
+        with patch("display.app.validate_power_socket_path") as validate:
+            validate.return_value = "/run/homelab-resource-monitor/power.sock"
+            with self.assertRaises(KeyError):
+                asyncio.run(run_display({}))
+        validate.assert_called_once_with(
+            "/run/homelab-resource-monitor/power.sock"
+        )
 
     def test_calibration_maps_and_clamps_coordinates(self) -> None:
         calibration = {
