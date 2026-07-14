@@ -143,6 +143,15 @@ class UiStateTests(unittest.TestCase):
         self.assertEqual("graph_values", visible_action_at(graph, value, 160, 210))
         self.assertEqual("graph_next_metric", visible_action_at(graph, value, 300, 210))
         self.assertIsNone(visible_action_at(graph, value, 150, 40))
+        for fallback_node in (None, value):
+            fallback = UiState(
+                screen=Screen.GRAPH,
+                selected_category_id="health" if fallback_node else "cpu",
+            )
+            with self.subTest(fallback_node=fallback_node is not None):
+                self.assertEqual("previous", visible_action_at(fallback, fallback_node, 10, 210))
+                self.assertEqual("center", visible_action_at(fallback, fallback_node, 160, 210))
+                self.assertEqual("next", visible_action_at(fallback, fallback_node, 300, 210))
         state = UiState(screen=Screen.VALUES, metric_by_category={"cpu": "temperature"})
         state_before = copy.deepcopy(state)
         node_before = copy.deepcopy(value)
@@ -194,6 +203,28 @@ class UiStateTests(unittest.TestCase):
             context(),
         ).state
         self.assertEqual((None, 0), (selected.selected_node_id, selected.node_index_hint))
+
+    def test_empty_refresh_normalizes_node_dependent_screens_before_input(self) -> None:
+        for screen in (Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH):
+            with self.subTest(screen=screen):
+                transition = reduce_ui(
+                    UiState(screen=screen, selected_node_id="desktop", node_index_hint=3),
+                    DataRefreshed((), False, 1),
+                    context(),
+                )
+                self.assertEqual((None, 0, Screen.OVERVIEW), (
+                    transition.state.selected_node_id,
+                    transition.state.node_index_hint,
+                    transition.state.screen,
+                ))
+                self.assertTrue(transition.changed and transition.full_refresh)
+                for x in (10, 160, 300):
+                    pressed = reduce_ui(
+                        transition.state,
+                        ShortPress(x, 210, 2),
+                        context(),
+                    )
+                    self.assertEqual(Screen.OVERVIEW, pressed.state.screen)
 
     def test_waiting_restored_removal_and_addition_preserve_id_semantics(self) -> None:
         waiting_node = waiting("a")
@@ -679,6 +710,22 @@ class UiStateTests(unittest.TestCase):
 
     def test_invalid_graph_category_normalizes_to_values(self) -> None:
         value = node()
+        fallback = UiState(
+            screen=Screen.GRAPH,
+            selected_node_id="desktop",
+            selected_category_id="health",
+        )
+        short = reduce_ui(fallback, ShortPress(160, 210, 1), context((value,)))
+        long = reduce_ui(fallback, LongPress(160, 210, 2), context((value,)))
+        self.assertEqual((Screen.OVERVIEW, "short_center"), (
+            short.state.screen,
+            short.completed_action,
+        ))
+        self.assertEqual((Screen.MAIN_MENU, "long_menu"), (
+            long.state.screen,
+            long.completed_action,
+        ))
+
         refreshed = reduce_ui(
             UiState(screen=Screen.GRAPH, selected_category_id="health"),
             DataRefreshed((value,), True, 1),

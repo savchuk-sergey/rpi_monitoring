@@ -130,7 +130,11 @@ def visible_action_at(
     x: int,
     y: int,
 ) -> str | None:
-    if state.screen == Screen.GRAPH:
+    if (
+        state.screen == Screen.GRAPH
+        and node is not None
+        and can_open_graph(state.category_id(node))
+    ):
         return graph_action_at(x, y)
     footer_action = touch_action(x, y)
     if footer_action is not None:
@@ -204,6 +208,9 @@ def reduce_ui(
         else:
             next_state.node_index_hint = 0
             next_state.selected_node_id = None
+            if state.screen in {Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH}:
+                next_state.screen = Screen.OVERVIEW
+                return UiTransition(next_state, changed=True, full_refresh=True)
 
         if event.nodes and state.screen in {Screen.VALUES, Screen.GRAPH}:
             selected = category(state.selected_category_id)
@@ -230,7 +237,7 @@ def reduce_ui(
 
         if isinstance(event, LongPress):
             if (
-                action == "center" and state.screen in {Screen.OVERVIEW, Screen.VALUES}
+                action == "center" and state.screen in {Screen.OVERVIEW, Screen.VALUES, Screen.GRAPH}
             ) or (
                 action == "graph_values" and state.screen == Screen.GRAPH
             ):
@@ -324,7 +331,7 @@ def reduce_ui(
                     full_refresh=True,
                     completed_action="short_center",
                 )
-            if state.screen == Screen.VALUES:
+            if state.screen in {Screen.VALUES, Screen.GRAPH}:
                 next_state.screen = Screen.OVERVIEW
                 return UiTransition(
                     next_state,

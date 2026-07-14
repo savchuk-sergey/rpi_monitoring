@@ -62,7 +62,15 @@ from display.renderer import (
     _value,
     render,
 )
-from display.ui_state import ShortPress, Screen, UiContext, UiState, reduce_ui
+from display.ui_state import (
+    DataRefreshed,
+    ShortPress,
+    Screen,
+    UiContext,
+    UiState,
+    reduce_ui,
+    visible_action_at,
+)
 from tools.touch_calibrate import calculate
 
 
@@ -874,11 +882,12 @@ class DisplayTests(unittest.TestCase):
     def test_invalid_graph_category_renders_values_safely(self) -> None:
         value = complete_v2_node()
         now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        graph_state = UiState(screen=Screen.GRAPH, selected_category_id="health")
         graph_health = render(
             value,
             (1, 1),
             True,
-            UiState(screen=Screen.GRAPH, selected_category_id="health"),
+            graph_state,
             now=now,
         )
         values_health = render(
@@ -890,6 +899,29 @@ class DisplayTests(unittest.TestCase):
         )
         self.assertEqual(values_health.tobytes(), graph_health.tobytes())
         self.assertEqual(VALUES_RENDER_HASHES["health"], hashlib.sha256(graph_health.tobytes()).hexdigest())
+        self.assertEqual(("previous", "center", "next"), tuple(
+            visible_action_at(graph_state, value, x, 210) for x in (10, 160, 300)
+        ))
+
+    def test_empty_refresh_aligns_rendered_overview_and_touch_contract(self) -> None:
+        context = UiContext((), 30, 45, 15, 10)
+        overview = render(None, ui_state=UiState(screen=Screen.OVERVIEW))
+        for screen in (Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH):
+            with self.subTest(screen=screen):
+                transition = reduce_ui(
+                    UiState(screen=screen, selected_node_id="desktop"),
+                    DataRefreshed((), False, 1),
+                    context,
+                )
+                self.assertEqual(Screen.OVERVIEW, transition.state.screen)
+                self.assertEqual(
+                    overview.tobytes(),
+                    render(None, ui_state=transition.state).tobytes(),
+                )
+                self.assertEqual(("previous", "center", "next"), tuple(
+                    visible_action_at(transition.state, None, x, 210)
+                    for x in (10, 160, 300)
+                ))
 
     def test_graph_footer_labels_wrap_fit_and_pressed_feedback(self) -> None:
         value = complete_v2_node()
