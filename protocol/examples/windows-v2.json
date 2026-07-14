@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "node_id": "desktop",
+  "display_name": "Desktop",
+  "timestamp_utc": "2026-07-12T03:00:00Z",
+  "os": { "family": "windows", "version": "Windows 11" },
+  "cpu": {
+    "usage_percent": 34.5,
+    "temperature_c": 61.0,
+    "power_w": 28.4,
+    "clock_mhz": 4725.0
+  },
+  "memory": {
+    "usage_percent": 72.1,
+    "used_bytes": 24773365760,
+    "total_bytes": 34359738368,
+    "swap_used_bytes": 2147483648,
+    "swap_total_bytes": 8589934592,
+    "swap_usage_percent": 25.0,
+    "pressure_some_percent": null
+  },
+  "gpu": [
+    {
+      "id": "0",
+      "name": "NVIDIA GPU",
+      "usage_percent": 81.0,
+      "temperature_c": 69.0,
+      "power_w": 117.0,
+      "memory_used_bytes": 6442450944,
+      "memory_total_bytes": 12884901888,
+      "memory_usage_percent": 50.0,
+      "fan_percent": 74.0,
+      "clock_mhz": 2625.0
+    }
+  ],
+  "storage": {
+    "name": "C:\\",
+    "usage_percent": 60.0,
+    "used_bytes": 600000000000,
+    "total_bytes": 1000000000000,
+    "read_bytes_per_second": 1250000,
+    "write_bytes_per_second": 640000,
+    "temperature_c": 42.0
+  },
+  "network": {
+    "interface": "Ethernet",
+    "link_up": true,
+    "down_bytes_per_second": 12500000,
+    "up_bytes_per_second": 2500000
+  },
+  "health": {
+    "uptime_seconds": 86400,
+    "undervoltage": null,
+    "throttled": null
+  },
+  "collector": { "version": "0.2.0", "errors": [] }
+}

@@ -22,12 +22,54 @@ class LinuxCollectorTests(unittest.TestCase):
 
     def test_proc_cpu_and_memory_fixtures(self) -> None:
         self.write("proc/stat", "cpu  100 0 100 800 0 0 0 0\n")
-        self.write("proc/meminfo", "MemTotal: 1000 kB\nMemAvailable: 250 kB\n")
+        self.write(
+            "proc/meminfo",
+            "MemTotal: 1000 kB\nMemAvailable: 250 kB\nSwapTotal: 500 kB\nSwapFree: 400 kB\n",
+        )
         collector = LinuxCollector(self.root)
         self.assertIsNone(collector.cpu_usage())
         self.write("proc/stat", "cpu  200 0 200 900 0 0 0 0\n")
         self.assertEqual(66.7, collector.cpu_usage())
         self.assertEqual(75.0, collector.memory_usage())
+        self.assertEqual(20.0, collector.memory_metrics()["swap_usage_percent"])
+
+    def test_v2_clock_pressure_uptime_and_pi_health_fixtures(self) -> None:
+        self.write("sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "1800000\n")
+        self.write("sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq", "2200000\n")
+        self.write("proc/pressure/memory", "some avg10=1.25 avg60=0.50 avg300=0.10 total=42\n")
+        self.write("proc/uptime", "86400.75 10.0\n")
+        collector = LinuxCollector(self.root)
+        self.assertEqual(2000.0, collector.cpu_clock())
+        self.assertEqual(1.25, collector.memory_pressure())
+        self.assertEqual(86400, collector.uptime())
+
+        runner = lambda *_: subprocess.CompletedProcess([], 0, "throttled=0x5\n", "")
+        self.assertEqual(
+            {"undervoltage": True, "throttled": True},
+            LinuxCollector(self.root, runner=runner).raspberry_pi_health(),
+        )
+
+    def test_storage_and_network_rate_fixtures(self) -> None:
+        self.write("proc/self/mountinfo", "36 25 8:1 / / rw - ext4 /dev/sda1 rw\n")
+        self.write("proc/diskstats", "8 1 sda1 0 0 100 0 0 0 200 0 0 0 0 0 0 0 0\n")
+        storage = LinuxCollector(self.root, clock=iter((1.0, 3.0)).__next__)
+        with patch("agents.linux.collector.shutil.disk_usage", return_value=(4096000, 3072000, 1024000)):
+            self.assertIsNone(storage.storage_metrics()["read_bytes_per_second"])
+            self.write("proc/diskstats", "8 1 sda1 0 0 140 0 0 0 260 0 0 0 0 0 0 0 0\n")
+            rates = storage.storage_metrics()
+        self.assertEqual((10240.0, 15360.0), (
+            rates["read_bytes_per_second"], rates["write_bytes_per_second"]
+        ))
+
+        self.write("sys/class/net/eth0/operstate", "up\n")
+        self.write("proc/net/dev", "eth0: 100 0 0 0 0 0 0 0 50 0 0 0 0 0 0 0\n")
+        network = LinuxCollector(self.root, clock=iter((1.0, 3.0)).__next__)
+        self.assertIsNone(network.network_metrics()["down_bytes_per_second"])
+        self.write("proc/net/dev", "eth0: 300 0 0 0 0 0 0 0 150 0 0 0 0 0 0 0\n")
+        rates = network.network_metrics()
+        self.assertEqual((100.0, 50.0, True), (
+            rates["down_bytes_per_second"], rates["up_bytes_per_second"], rates["link_up"]
+        ))
 
     def test_thermal_fixture(self) -> None:
         self.write("sys/class/thermal/thermal_zone0/type", "cpu-thermal\n")
@@ -81,9 +123,20 @@ class LinuxCollectorTests(unittest.TestCase):
         self.assertEqual(1.0, collector.cpu_power())
 
     def test_nvidia_smi_fixture_and_malformed_output(self) -> None:
-        good = lambda *_: subprocess.CompletedProcess([], 0, "0, RTX, 81, 69, 117\n", "")
+        good = lambda *_: subprocess.CompletedProcess(
+            [], 0, "0, RTX, 81, 69, 117, 6144, 12288, 74, 2625\n", ""
+        )
         gpu = LinuxCollector(self.root, runner=good).gpus()[0]
-        self.assertEqual((81.0, 117.0), (gpu["usage_percent"], gpu["power_w"]))
+        self.assertEqual(
+            (81.0, 117.0, 50.0, 74.0, 2625.0),
+            (
+                gpu["usage_percent"],
+                gpu["power_w"],
+                gpu["memory_usage_percent"],
+                gpu["fan_percent"],
+                gpu["clock_mhz"],
+            ),
+        )
         bad = lambda *_: subprocess.CompletedProcess([], 0, "broken\n", "")
         with self.assertRaises(ValueError):
             LinuxCollector(self.root, runner=bad).gpus()
@@ -101,6 +154,8 @@ class LinuxCollectorTests(unittest.TestCase):
         with patch("agents.linux.collector.shutil.which", return_value=None):
             sample = LinuxCollector(self.root).collect("node", "Node")
         self.assertEqual("node", sample["node_id"])
+        self.assertEqual(2, sample["schema_version"])
+        self.assertEqual("0.2.0", sample["collector"]["version"])
         self.assertGreater(len(sample["collector"]["errors"]), 0)
         self.assertEqual([], sample["gpu"])
 
