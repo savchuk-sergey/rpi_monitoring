@@ -16,6 +16,12 @@ from display.navigation import (
     GRAPH_NEXT_METRIC_HITBOX,
     GRAPH_PREVIOUS_METRIC_HITBOX,
     GRAPH_VALUES_HITBOX,
+    MENU_BACK_HITBOX,
+    MENU_NEXT_PAGE_HITBOX,
+    MENU_PAGE_COUNT,
+    MENU_PAGES,
+    MENU_PREVIOUS_PAGE_HITBOX,
+    MENU_TILE_RECTS,
     MODE_HITBOX,
     NAV_WIDTH,
     NEXT_HITBOX,
@@ -24,7 +30,11 @@ from display.navigation import (
     VALUES_GRAPH_HITBOX,
     graph_action_at,
     map_touch,
+    menu_action_at,
+    menu_page_for_category,
+    menu_tile_id_at,
     move,
+    normalize_menu_page,
     selected_index,
     touch_action,
     values_action_at,
@@ -108,10 +118,33 @@ def waiting_node():
 
 
 UNCHANGED_RENDER_HASHES = {
-    "main_menu_capabilities": "21b52b19516410dfed6b3946cbf9cc518fcf17d09c454d7728bcf237ea3db399",
-    "main_menu_legacy": "a73cbc7872ebc0b018673c4409c0b0d5d2281cb7c16fc684c1f637246d9bd19b",
     "overview_legacy": "7a64eb574d9d969407dec89fbf7ab8493a748dadec645124825d6e9cef15c9d4",
     "overview_waiting": "7064e7983ea4571ed55586a2d656d493bbce9032bb44374853015a5d7faac6d4",
+}
+
+OLD_MAIN_MENU_HASHES = {
+    "main_menu_capabilities": "21b52b19516410dfed6b3946cbf9cc518fcf17d09c454d7728bcf237ea3db399",
+    "main_menu_legacy": "a73cbc7872ebc0b018673c4409c0b0d5d2281cb7c16fc684c1f637246d9bd19b",
+}
+
+MENU_RENDER_HASHES = {
+    "menu_page_1_back_pressed": "88fa576a60b8c0a0b17082a51f3014d9af247701c75497a9282111270a799d3d",
+    "menu_page_1_capabilities": "400d71c933ea41af3ddb5a2388309b0e7d9e3b42de8f66ab3db19946c0707a0d",
+    "menu_page_1_cpu_pressed": "926429ff86c7b7a6c67c44911f026097c28c0a56f60f1d832feec1e2faf8565a",
+    "menu_page_1_gpu_pressed": "8477687242d5acf56c1edba147b88213a64940d0eab0986a5d6adbf74a20f5d5",
+    "menu_page_1_legacy": "400d71c933ea41af3ddb5a2388309b0e7d9e3b42de8f66ab3db19946c0707a0d",
+    "menu_page_1_memory_pressed": "6a3aab019040a9171e861c30c93d4d650f5da2924e5e9ae78f09e0dac397c026",
+    "menu_page_1_next_pressed": "b2adc4128ceedd4bd7a7ee7aa3db2c012adb95db3787a03efe2a41f72e1cd29b",
+    "menu_page_1_previous_pressed": "a540cd8cbf600d32e2aff5c8dc4112bc8ce4c24b54159f580baba09a4dcaa98d",
+    "menu_page_2_back_pressed": "9a49fe8ad02cdd4c3e3e073b924f954d4dc337488318153ddf30566bb1d0c1a8",
+    "menu_page_2_capabilities": "504b99df8e1f07a67a43da4b6d9f0fe62cf4895ee56a75260e48ff69c242a2d9",
+    "menu_page_2_health_errors": "2bc449356552e31e749105ba9ac67623ef36c2b6ba83adca199680e11a8604a4",
+    "menu_page_2_health_pressed": "df811d7d7e89f7693b9c8ba0f3230a42ca1b13d1d3ab2fecc00af84b96759463",
+    "menu_page_2_legacy": "82f7aa8af7d5c5a45ec9bc68c8e7a8aeac77046ed2f5f33627b11631825fec52",
+    "menu_page_2_network_pressed": "fc22aac812d0179e15b02188e07f31fa8a051125bd585cf9e892a5e61e8e3747",
+    "menu_page_2_next_pressed": "ecb162a7b7fbe6ab25ea79a0ab7e5aa1b927477d0a4565616da6e275974eb4ee",
+    "menu_page_2_previous_pressed": "86ee197af6c2382cb6912658f7ce90f0a12c8793b5fcaca1b2c03dd1c5a04dca",
+    "menu_page_2_storage_pressed": "7b349b308e035bb3c4d120caedc08d9a2620699636dc448b05a19ccb42b4e93c",
 }
 
 OLD_GRAPH_HASHES = {
@@ -232,6 +265,72 @@ class DisplayTests(unittest.TestCase):
             with self.subTest(point=point):
                 self.assertIsNone(graph_action_at(*point))
 
+    def test_phase_5_menu_navigation_geometry_and_boundaries_are_exact(self) -> None:
+        self.assertEqual(2, MENU_PAGE_COUNT)
+        self.assertEqual(
+            ((0, 32, 160, 112), (160, 32, 320, 112),
+             (0, 112, 160, 192), (160, 112, 320, 192)),
+            MENU_TILE_RECTS,
+        )
+        self.assertEqual(
+            (("cpu", "memory", "gpu", "nodes"),
+             ("storage", "network", "health", "system")),
+            MENU_PAGES,
+        )
+        self.assertTrue(all((right - left, bottom - top) == (160, 80)
+                            for left, top, right, bottom in MENU_TILE_RECTS))
+        self.assertEqual(320 * 160, sum(
+            (right - left) * (bottom - top)
+            for left, top, right, bottom in MENU_TILE_RECTS
+        ))
+        self.assertEqual(
+            ((0, 192, 64, 240), (64, 192, 256, 240), (256, 192, 320, 240)),
+            (MENU_PREVIOUS_PAGE_HITBOX, MENU_BACK_HITBOX, MENU_NEXT_PAGE_HITBOX),
+        )
+        self.assertEqual((64, 192, 64), tuple(
+            right - left for left, _, right, _ in (
+                MENU_PREVIOUS_PAGE_HITBOX,
+                MENU_BACK_HITBOX,
+                MENU_NEXT_PAGE_HITBOX,
+            )
+        ))
+        self.assertEqual((48, 48, 48), tuple(
+            bottom - top for _, top, _, bottom in (
+                MENU_PREVIOUS_PAGE_HITBOX,
+                MENU_BACK_HITBOX,
+                MENU_NEXT_PAGE_HITBOX,
+            )
+        ))
+        expected_tiles = {
+            0: {(0, 32): "cpu", (159, 111): "cpu", (160, 32): "memory",
+                (319, 111): "memory", (0, 112): "gpu", (159, 191): "gpu",
+                (160, 112): "nodes", (319, 191): "nodes"},
+            1: {(0, 32): "storage", (159, 111): "storage", (160, 32): "network",
+                (319, 111): "network", (0, 112): "health", (159, 191): "health",
+                (160, 112): "system", (319, 191): "system"},
+        }
+        for page, points in expected_tiles.items():
+            for point, category_id in points.items():
+                with self.subTest(page=page, point=point):
+                    self.assertEqual(category_id, menu_tile_id_at(page, *point))
+                    self.assertEqual(f"menu_tile_{category_id}", menu_action_at(page, *point))
+        for page in (0, 1):
+            for point in ((0, 31), (319, 31), (-1, 72), (320, 72)):
+                self.assertIsNone(menu_tile_id_at(page, *point))
+            self.assertEqual(
+                ("menu_previous_page", "menu_back", "menu_next_page"),
+                tuple(menu_action_at(page, x, 210) for x in (0, 64, 256)),
+            )
+        for point in ((-1, 210), (320, 210), (0, 240), (319, 240)):
+            self.assertIsNone(menu_action_at(0, *point))
+        self.assertEqual((0, 0, 1, 1), tuple(normalize_menu_page(page) for page in (-1, 0, 1, 2)))
+        self.assertEqual(
+            (0, 0, 0, 1, 1, 1, 0),
+            tuple(menu_page_for_category(value) for value in (
+                "cpu", "memory", "gpu", "storage", "network", "health", "unknown"
+            )),
+        )
+
     def test_open_graph_geometry_and_boundaries_are_exact(self) -> None:
         self.assertEqual((0, 140, 320, 192), VALUES_GRAPH_HITBOX)
         self.assertEqual((8, 142, 312, 190), VALUES_GRAPH_BUTTON_RECT)
@@ -267,32 +366,9 @@ class DisplayTests(unittest.TestCase):
 
     def test_unaffected_render_hashes_are_unchanged(self) -> None:
         now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
-        capabilities = {
-            "cpu.usage_percent": {
-                "supported": True,
-                "source": "procfs",
-                "reason": None,
-            },
-            "storage.usage_percent": {
-                "supported": True,
-                "source": "statvfs",
-                "reason": None,
-            },
-            "gpu.usage_percent": {
-                "supported": False,
-                "source": None,
-                "reason": "sensor_not_found",
-            },
-        }
         scenarios = {
             "overview_legacy": (node(), UiState(), None),
             "overview_waiting": (waiting_node(), UiState(), None),
-            "main_menu_legacy": (node(), UiState(screen=Screen.MAIN_MENU), None),
-            "main_menu_capabilities": (
-                node(capabilities=capabilities),
-                UiState(screen=Screen.MAIN_MENU),
-                None,
-            ),
         }
         for name, (value, state, history_store) in scenarios.items():
             with self.subTest(name=name):
@@ -307,6 +383,217 @@ class DisplayTests(unittest.TestCase):
                     ).tobytes()
                 ).hexdigest()
                 self.assertEqual(UNCHANGED_RENDER_HASHES[name], digest)
+
+    def test_phase_5_menu_rendering_geometry_availability_and_footer_are_exact(self) -> None:
+        capabilities = {
+            "cpu.usage_percent": {"supported": True, "source": "procfs", "reason": None},
+            "storage.usage_percent": {"supported": True, "source": "statvfs", "reason": None},
+            "gpu.usage_percent": {"supported": False, "source": None, "reason": "sensor_not_found"},
+        }
+        expected = {
+            0: (
+                ("CPU", "READY", BRIGHT),
+                ("MEMORY", "READY", GREEN),
+                ("GRAPHICS", "NO DATA", MUTED),
+                ("NODES", "LATER", MUTED),
+            ),
+            1: (
+                ("STORAGE", "READY", GREEN),
+                ("NETWORK", "NO DATA", MUTED),
+                ("HEALTH", "READY", GREEN),
+                ("SYSTEM", "LATER", MUTED),
+            ),
+        }
+        original_text = ImageDraw.ImageDraw.text
+        original_rectangle = ImageDraw.ImageDraw.rectangle
+        original_line = ImageDraw.ImageDraw.line
+        for page, expected_tiles in expected.items():
+            text_calls = []
+            rectangle_calls = []
+            line_calls = []
+
+            def record_text(draw, xy, text, *args, **kwargs):
+                text_calls.append((xy, text, kwargs))
+                return original_text(draw, xy, text, *args, **kwargs)
+
+            def record_rectangle(draw, xy, *args, **kwargs):
+                rectangle_calls.append((xy, kwargs))
+                return original_rectangle(draw, xy, *args, **kwargs)
+
+            def record_line(draw, xy, *args, **kwargs):
+                line_calls.append((xy, kwargs))
+                return original_line(draw, xy, *args, **kwargs)
+
+            with self.subTest(page=page), \
+                    patch.object(ImageDraw.ImageDraw, "text", new=record_text), \
+                    patch.object(ImageDraw.ImageDraw, "rectangle", new=record_rectangle), \
+                    patch.object(ImageDraw.ImageDraw, "line", new=record_line), \
+                    patch("display.renderer._footer") as standard_footer:
+                render(
+                    node(capabilities=capabilities),
+                    ui_state=UiState(screen=Screen.MAIN_MENU, menu_page=page),
+                )
+            standard_footer.assert_not_called()
+            self.assertIn(((10, 16), "MENU"), {(xy, text) for xy, text, _ in text_calls})
+            self.assertIn((310, 16), {xy for xy, _, _ in text_calls})
+            titles = tuple(
+                (text, kwargs["fill"])
+                for xy, text, kwargs in text_calls
+                if xy in {(80, 87), (240, 87), (80, 167), (240, 167)}
+            )
+            subtitles = tuple(
+                (text, kwargs["fill"])
+                for xy, text, kwargs in text_calls
+                if xy in {(80, 101), (240, 101), (80, 181), (240, 181)}
+            )
+            self.assertEqual(tuple((title, color) for title, _, color in expected_tiles), titles)
+            self.assertEqual(tuple((subtitle, color) for _, subtitle, color in expected_tiles), subtitles)
+            self.assertEqual(
+                ("<", f"BACK {page + 1}/2", ">"),
+                tuple(text for xy, text, _ in text_calls if xy[1] == 216),
+            )
+            self.assertIn(((0, 192, 319, 192), {"fill": MUTED}), line_calls)
+            if page == 0:
+                self.assertIn(((3, 35, 156, 108), {"outline": MUTED, "width": 1}), rectangle_calls)
+                self.assertIn(((237, 123, 243, 129), {"outline": MUTED, "width": 2}), rectangle_calls)
+                self.assertIn(((226, 144, 232, 150), {"outline": MUTED, "width": 2}), rectangle_calls)
+                self.assertIn(((248, 144, 254, 150), {"outline": MUTED, "width": 2}), rectangle_calls)
+            else:
+                self.assertIn(((226, 125, 254, 149), {"outline": MUTED, "width": 2}), rectangle_calls)
+
+        health_text = []
+
+        def record_health_text(draw, xy, text, *args, **kwargs):
+            health_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_health_text):
+            render(
+                complete_v2_node(collector={"version": "0.3.0", "errors": ["a", "b"]}),
+                ui_state=UiState(
+                    screen=Screen.MAIN_MENU,
+                    menu_page=1,
+                    selected_category_id="network",
+                ),
+            )
+        health_title = next(call for call in health_text if call[1] == "HEALTH")
+        health_subtitle = next(call for call in health_text if call[1] == "ERR 2")
+        self.assertEqual((AMBER, AMBER), (
+            health_title[2]["fill"], health_subtitle[2]["fill"]
+        ))
+
+    def test_phase_5_menu_pressed_feedback_is_localized_and_disabled_tiles_stay_idle(self) -> None:
+        value = complete_v2_node()
+        for page, actions in {
+            0: ("menu_tile_cpu", "menu_tile_memory", "menu_tile_gpu"),
+            1: ("menu_tile_storage", "menu_tile_network", "menu_tile_health"),
+        }.items():
+            state = UiState(screen=Screen.MAIN_MENU, menu_page=page)
+            normal = render(value, ui_state=state)
+            for action, hitbox in zip(actions, MENU_TILE_RECTS):
+                with self.subTest(page=page, action=action):
+                    pressed = render(value, ui_state=state, pressed_action=action)
+                    difference = ImageChops.difference(normal, pressed).getbbox()
+                    self.assertIsNotNone(difference)
+                    self.assertGreaterEqual(difference[0], hitbox[0])
+                    self.assertGreaterEqual(difference[1], hitbox[1])
+                    self.assertLessEqual(difference[2], hitbox[2])
+                    self.assertLessEqual(difference[3], hitbox[3])
+                    self.assertEqual(
+                        ImageColor.getrgb(MUTED),
+                        pressed.getpixel((hitbox[0] + 4, hitbox[1] + 4)),
+                    )
+
+            footer_actions = (
+                ("menu_previous_page", MENU_PREVIOUS_PAGE_HITBOX),
+                ("menu_back", MENU_BACK_HITBOX),
+                ("menu_next_page", MENU_NEXT_PAGE_HITBOX),
+            )
+            for action, hitbox in footer_actions:
+                with self.subTest(page=page, action=action):
+                    pressed = render(value, ui_state=state, pressed_action=action)
+                    difference = ImageChops.difference(normal, pressed).getbbox()
+                    self.assertIsNotNone(difference)
+                    self.assertGreaterEqual(difference[0], hitbox[0])
+                    self.assertGreaterEqual(difference[1], hitbox[1])
+                    self.assertLessEqual(difference[2], hitbox[2])
+                    self.assertLessEqual(difference[3], hitbox[3])
+
+        unavailable = node()
+        for page, point, forbidden_action in (
+            (0, (80, 152), "menu_tile_gpu"),
+            (0, (240, 152), "menu_tile_nodes"),
+            (1, (80, 72), "menu_tile_storage"),
+            (1, (240, 152), "menu_tile_system"),
+        ):
+            state = UiState(screen=Screen.MAIN_MENU, menu_page=page)
+            with self.subTest(page=page, point=point):
+                self.assertIsNone(visible_action_at(state, unavailable, *point))
+                self.assertEqual(
+                    render(unavailable, ui_state=state).tobytes(),
+                    render(unavailable, ui_state=state, pressed_action=forbidden_action).tobytes(),
+                )
+
+    def test_phase_5_menu_render_hashes_are_exact(self) -> None:
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        capabilities = {
+            "cpu.usage_percent": {"supported": True, "source": "procfs", "reason": None},
+            "storage.usage_percent": {"supported": True, "source": "statvfs", "reason": None},
+            "gpu.usage_percent": {"supported": False, "source": None, "reason": "sensor_not_found"},
+        }
+        legacy = node()
+        capable = node(capabilities=capabilities)
+        full = complete_v2_node()
+        errors = complete_v2_node(collector={"version": "0.3.0", "errors": ["a", "b"]})
+        scenarios = {
+            "menu_page_1_legacy": (legacy, UiState(screen=Screen.MAIN_MENU), None),
+            "menu_page_1_capabilities": (capable, UiState(screen=Screen.MAIN_MENU), None),
+            "menu_page_2_legacy": (legacy, UiState(screen=Screen.MAIN_MENU, menu_page=1), None),
+            "menu_page_2_capabilities": (capable, UiState(screen=Screen.MAIN_MENU, menu_page=1), None),
+            "menu_page_2_health_errors": (
+                errors,
+                UiState(screen=Screen.MAIN_MENU, menu_page=1, selected_category_id="network"),
+                None,
+            ),
+        }
+        for category_id in ("cpu", "memory", "gpu"):
+            scenarios[f"menu_page_1_{category_id}_pressed"] = (
+                full, UiState(screen=Screen.MAIN_MENU), f"menu_tile_{category_id}"
+            )
+        for category_id in ("storage", "network", "health"):
+            scenarios[f"menu_page_2_{category_id}_pressed"] = (
+                full, UiState(screen=Screen.MAIN_MENU, menu_page=1), f"menu_tile_{category_id}"
+            )
+        for page in (1, 2):
+            for suffix, action in (
+                ("previous", "menu_previous_page"),
+                ("back", "menu_back"),
+                ("next", "menu_next_page"),
+            ):
+                scenarios[f"menu_page_{page}_{suffix}_pressed"] = (
+                    full,
+                    UiState(screen=Screen.MAIN_MENU, menu_page=page - 1),
+                    action,
+                )
+        for name, (value, state, pressed_action) in scenarios.items():
+            with self.subTest(name=name):
+                digest = hashlib.sha256(render(
+                    value,
+                    (1, 4),
+                    True,
+                    state,
+                    pressed_action=pressed_action,
+                    now=now,
+                ).tobytes()).hexdigest()
+                self.assertEqual(MENU_RENDER_HASHES[name], digest)
+        self.assertNotEqual(
+            OLD_MAIN_MENU_HASHES["main_menu_legacy"],
+            MENU_RENDER_HASHES["menu_page_1_legacy"],
+        )
+        self.assertNotEqual(
+            OLD_MAIN_MENU_HASHES["main_menu_capabilities"],
+            MENU_RENDER_HASHES["menu_page_1_capabilities"],
+        )
 
     def test_phase_4_graph_render_hashes_are_exact(self) -> None:
         now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)

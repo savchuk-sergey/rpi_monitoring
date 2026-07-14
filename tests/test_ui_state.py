@@ -161,6 +161,35 @@ class UiStateTests(unittest.TestCase):
         self.assertEqual(state_before, state)
         self.assertEqual(node_before, value)
 
+        menu_value = node(
+            gpu=[{"usage_percent": 50}],
+            storage={"usage_percent": 50},
+            network={"interface": "eth0"},
+        )
+        expected = {
+            0: ((80, 72, "menu_tile_cpu"), (240, 72, "menu_tile_memory"),
+                (80, 152, "menu_tile_gpu"), (240, 152, None)),
+            1: ((80, 72, "menu_tile_storage"), (240, 72, "menu_tile_network"),
+                (80, 152, "menu_tile_health"), (240, 152, None)),
+        }
+        for page, points in expected.items():
+            menu = UiState(screen=Screen.MAIN_MENU, menu_page=page)
+            for x, y, action in points:
+                with self.subTest(page=page, point=(x, y)):
+                    self.assertEqual(action, visible_action_at(menu, menu_value, x, y))
+            self.assertEqual(
+                ("menu_previous_page", "menu_back", "menu_next_page"),
+                tuple(visible_action_at(menu, menu_value, x, 210) for x in (10, 160, 300)),
+            )
+        unavailable = UiState(screen=Screen.MAIN_MENU, menu_page=1)
+        unavailable_node = node()
+        self.assertIsNone(visible_action_at(unavailable, unavailable_node, 80, 72))
+        self.assertIsNone(visible_action_at(unavailable, unavailable_node, 240, 72))
+        self.assertEqual(
+            ("previous", "center", "next"),
+            tuple(visible_action_at(unavailable, None, x, 210) for x in (10, 160, 300)),
+        )
+
     def test_reducer_copies_state_dictionary_and_does_not_mutate_inputs(self) -> None:
         value = node()
         state = UiState(metric_by_category={"cpu": "load"})
@@ -390,7 +419,7 @@ class UiStateTests(unittest.TestCase):
             nodes = (gpu_node, target)
             for screen in (Screen.VALUES, Screen.GRAPH, Screen.MAIN_MENU):
                 for event_name, event in events.items():
-                    if screen == Screen.GRAPH and event_name == "next":
+                    if screen in {Screen.GRAPH, Screen.MAIN_MENU} and event_name == "next":
                         continue
                     with self.subTest(
                         target=target_name,
@@ -446,44 +475,220 @@ class UiStateTests(unittest.TestCase):
             ShortPress(160, 210, 7),
             context((value,)),
         )
-        self.assertFalse(menu.changed)
+        self.assertEqual((Screen.OVERVIEW, "menu_back"), (
+            menu.state.screen,
+            menu.completed_action,
+        ))
+        self.assertTrue(menu.changed and menu.full_refresh)
 
     def test_long_center_transitions_and_outside_noop(self) -> None:
+        value = node()
         for screen in (Screen.OVERVIEW, Screen.VALUES, Screen.GRAPH):
             transition = reduce_ui(
                 UiState(screen=screen),
                 LongPress(160, 210, 2),
-                context(),
+                context((value,)),
             )
             self.assertEqual(Screen.MAIN_MENU, transition.state.screen)
+            self.assertEqual(0, transition.state.menu_page)
+            self.assertEqual("cpu", transition.state.selected_category_id)
+            self.assertEqual("load", transition.state.metric_by_category["cpu"])
             self.assertEqual("long_menu", transition.completed_action)
 
-        for state, event in (
-            (UiState(screen=Screen.MAIN_MENU), LongPress(160, 210, 3)),
-            (UiState(), LongPress(10, 100, 4)),
+        for state, event, ui_context in (
+            (UiState(), LongPress(160, 210, 1), context()),
+            (UiState(screen=Screen.MAIN_MENU), LongPress(160, 210, 3), context((value,))),
+            (UiState(), LongPress(10, 100, 4), context((value,))),
         ):
-            transition = reduce_ui(state, event, context())
+            transition = reduce_ui(state, event, ui_context)
             self.assertFalse(transition.changed)
             self.assertEqual(event.now, transition.state.last_interaction_at)
 
     def test_menu_category_selection_and_unavailable_rejection(self) -> None:
-        value = node()
-        selected = reduce_ui(
-            UiState(screen=Screen.MAIN_MENU, selected_node_id="desktop"),
-            ShortPress(10, 40, 1),
-            context((value,)),
+        value = node(
+            gpu=[{"usage_percent": 50}],
+            storage={"usage_percent": 50},
+            network={"interface": "eth0"},
         )
-        self.assertEqual(Screen.VALUES, selected.state.screen)
-        self.assertEqual("category_cpu", selected.completed_action)
-        self.assertEqual("load", selected.state.metric_by_category["cpu"])
+        targets = {
+            "cpu": (0, 80, 72),
+            "memory": (0, 240, 72),
+            "gpu": (0, 80, 152),
+            "storage": (1, 80, 72),
+            "network": (1, 240, 72),
+            "health": (1, 80, 152),
+        }
+        for category_id, (page, x, y) in targets.items():
+            with self.subTest(category=category_id):
+                selected = reduce_ui(
+                    UiState(
+                        screen=Screen.MAIN_MENU,
+                        selected_node_id="desktop",
+                        menu_page=page,
+                    ),
+                    ShortPress(x, y, 1),
+                    context((value,)),
+                )
+                self.assertEqual(Screen.VALUES, selected.state.screen)
+                self.assertEqual(category_id, selected.state.selected_category_id)
+                self.assertEqual(
+                    category(category_id).chart_metrics[0].id,
+                    selected.state.metric_by_category[category_id],
+                )
+                self.assertEqual(page, selected.state.menu_page)
+                self.assertEqual(f"category_{category_id}", selected.completed_action)
 
+        for page, point in ((0, (240, 152)), (1, (240, 152))):
+            future = reduce_ui(
+                UiState(screen=Screen.MAIN_MENU, selected_node_id="desktop", menu_page=page),
+                ShortPress(*point, 2),
+                context((value,)),
+            )
+            self.assertEqual(Screen.MAIN_MENU, future.state.screen)
+            self.assertFalse(future.changed)
+            self.assertIsNone(future.completed_action)
+
+        unavailable = node(storage={})
         rejected = reduce_ui(
-            UiState(screen=Screen.MAIN_MENU, selected_node_id="desktop"),
-            ShortPress(10, 120, 2),
-            context((value,)),
+            UiState(screen=Screen.MAIN_MENU, selected_node_id="desktop", menu_page=1),
+            ShortPress(80, 72, 3),
+            context((unavailable,)),
         )
         self.assertFalse(rejected.changed)
         self.assertEqual(Screen.MAIN_MENU, rejected.state.screen)
+
+    def test_menu_entry_pagination_back_and_state_preservation(self) -> None:
+        value = node(network={"interface": "eth0"})
+        for screen in (Screen.OVERVIEW, Screen.VALUES, Screen.GRAPH):
+            state = UiState(
+                screen=screen,
+                selected_node_id="desktop",
+                selected_category_id="network",
+                metric_by_category={"network": "up"},
+                selected_gpu_index=2,
+                nodes_page=3,
+            )
+            with self.subTest(entry_screen=screen):
+                opened = reduce_ui(state, LongPress(160, 210, 1), context((value,)))
+                self.assertEqual((Screen.MAIN_MENU, 1, "network", "up"), (
+                    opened.state.screen,
+                    opened.state.menu_page,
+                    opened.state.selected_category_id,
+                    opened.state.metric_by_category["network"],
+                ))
+
+        state = UiState(
+            screen=Screen.MAIN_MENU,
+            selected_node_id="desktop",
+            selected_category_id="network",
+            metric_by_category={"network": "up"},
+            selected_gpu_index=2,
+            menu_page=0,
+            nodes_page=3,
+        )
+        for x, expected_page, action in (
+            (10, 1, "menu_previous_page"),
+            (300, 0, "menu_next_page"),
+            (300, 1, "menu_next_page"),
+            (10, 0, "menu_previous_page"),
+        ):
+            transition = reduce_ui(state, ShortPress(x, 210, 2), context((value,)))
+            self.assertEqual(expected_page, transition.state.menu_page)
+            self.assertEqual(action, transition.completed_action)
+            self.assertEqual(("desktop", "network", {"network": "up"}, 2, 3), (
+                transition.state.selected_node_id,
+                transition.state.selected_category_id,
+                transition.state.metric_by_category,
+                transition.state.selected_gpu_index,
+                transition.state.nodes_page,
+            ))
+            state = transition.state
+
+        back = reduce_ui(state, ShortPress(160, 210, 3), context((value,)))
+        self.assertEqual((Screen.OVERVIEW, "menu_back"), (
+            back.state.screen,
+            back.completed_action,
+        ))
+        self.assertEqual(state.menu_page, back.state.menu_page)
+
+    def test_main_menu_refresh_and_auto_rotation_normalize_page(self) -> None:
+        network_node = node("a", network={"interface": "eth0"})
+        same_category = node("b", network={"interface": "eth1"})
+        no_network = node("c")
+        state = UiState(
+            screen=Screen.MAIN_MENU,
+            selected_node_id="a",
+            selected_category_id="network",
+            metric_by_category={"network": "up"},
+            menu_page=1,
+        )
+        refreshed = reduce_ui(
+            state,
+            DataRefreshed((network_node,), True, 1),
+            context((network_node,)),
+        )
+        self.assertEqual(("network", 1), (
+            refreshed.state.selected_category_id,
+            refreshed.state.menu_page,
+        ))
+
+        rotated_same = reduce_ui(
+            state,
+            AutoRotateTick(10, True),
+            context((network_node, same_category), rotate=10),
+        )
+        self.assertEqual(("b", "network", 1), (
+            rotated_same.state.selected_node_id,
+            rotated_same.state.selected_category_id,
+            rotated_same.state.menu_page,
+        ))
+        rotated_fallback = reduce_ui(
+            state,
+            AutoRotateTick(10, True),
+            context((network_node, no_network), rotate=10),
+        )
+        self.assertEqual(("c", "cpu", 0, Screen.MAIN_MENU), (
+            rotated_fallback.state.selected_node_id,
+            rotated_fallback.state.selected_category_id,
+            rotated_fallback.state.menu_page,
+            rotated_fallback.state.screen,
+        ))
+
+        invalid = reduce_ui(
+            UiState(
+                screen=Screen.MAIN_MENU,
+                selected_node_id="c",
+                selected_category_id="network",
+                menu_page=1,
+            ),
+            DataRefreshed((no_network,), True, 11),
+            context((no_network,)),
+        )
+        self.assertEqual(("cpu", "load", 0), (
+            invalid.state.selected_category_id,
+            invalid.state.metric_by_category["cpu"],
+            invalid.state.menu_page,
+        ))
+        self.assertTrue(invalid.changed and invalid.full_refresh)
+
+    def test_main_menu_end_to_end_sequence(self) -> None:
+        value = node(network={"interface": "eth0"})
+        ui_context = context((value,))
+        state = UiState(selected_node_id="desktop")
+        state = reduce_ui(state, LongPress(160, 210, 1), ui_context).state
+        self.assertEqual((Screen.MAIN_MENU, 0), (state.screen, state.menu_page))
+        state = reduce_ui(state, ShortPress(300, 210, 2), ui_context).state
+        self.assertEqual((Screen.MAIN_MENU, 1), (state.screen, state.menu_page))
+        selected = reduce_ui(state, ShortPress(240, 72, 3), ui_context)
+        self.assertEqual((Screen.VALUES, "network", "category_network"), (
+            selected.state.screen,
+            selected.state.selected_category_id,
+            selected.completed_action,
+        ))
+        state = reduce_ui(selected.state, LongPress(160, 210, 4), ui_context).state
+        self.assertEqual((Screen.MAIN_MENU, 1), (state.screen, state.menu_page))
+        state = reduce_ui(state, ShortPress(160, 210, 5), ui_context).state
+        self.assertEqual(Screen.OVERVIEW, state.screen)
 
     def test_values_open_graph_preserves_state_for_every_eligible_category(self) -> None:
         value = node(

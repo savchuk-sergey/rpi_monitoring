@@ -2,8 +2,18 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
-from display.categories import can_open_graph, category, category_at, default_category
-from display.navigation import graph_action_at, move, selected_index, touch_action, values_action_at
+from display.categories import can_open_graph, category, default_category
+from display.navigation import (
+    MENU_PAGE_COUNT,
+    graph_action_at,
+    menu_action_at,
+    menu_page_for_category,
+    move,
+    normalize_menu_page,
+    selected_index,
+    touch_action,
+    values_action_at,
+)
 
 
 class Screen(Enum):
@@ -136,6 +146,15 @@ def visible_action_at(
         and can_open_graph(state.category_id(node))
     ):
         return graph_action_at(x, y)
+    if state.screen == Screen.MAIN_MENU and node is not None:
+        action = menu_action_at(state.menu_page, x, y)
+        if action in {"menu_previous_page", "menu_back", "menu_next_page"}:
+            return action
+        if action in {None, "menu_tile_nodes", "menu_tile_system"}:
+            return None
+        category_id = action.removeprefix("menu_tile_")
+        selected = category(category_id)
+        return action if selected.id == category_id and selected.available(node) else None
     footer_action = touch_action(x, y)
     if footer_action is not None:
         return footer_action
@@ -145,6 +164,18 @@ def visible_action_at(
     if not can_open_graph(category_id):
         return None
     return values_action_at(x, y)
+
+
+def _open_main_menu(state: UiState, node: dict[str, Any]) -> UiState:
+    next_state = replace(state, metric_by_category=dict(state.metric_by_category))
+    category_id = state.category_id(node)
+    next_state.selected_category_id = category_id
+    metric_id = next_state.metric_id(node)
+    if metric_id:
+        next_state.metric_by_category[category_id] = metric_id
+    next_state.menu_page = menu_page_for_category(category_id)
+    next_state.screen = Screen.MAIN_MENU
+    return next_state
 
 
 def _select_graph_metric(
@@ -173,6 +204,9 @@ def _select_node(
     index: int,
     now: float,
 ) -> UiState:
+    previous_category_id = state.category_id(
+        nodes[selected_index(nodes, state.selected_node_id, state.node_index_hint)]
+    )
     next_state = replace(
         state,
         metric_by_category=dict(state.metric_by_category),
@@ -188,6 +222,12 @@ def _select_node(
         metric_id = next_state.metric_id(node)
         if metric_id:
             next_state.metric_by_category[category_id] = metric_id
+        if next_state.screen == Screen.MAIN_MENU:
+            next_state.menu_page = (
+                menu_page_for_category(category_id)
+                if category_id != previous_category_id
+                else normalize_menu_page(state.menu_page)
+            )
         if next_state.screen == Screen.GRAPH and not can_open_graph(category_id):
             next_state.screen = Screen.VALUES
     return next_state
@@ -210,6 +250,22 @@ def reduce_ui(
             next_state.selected_node_id = None
             if state.screen in {Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH}:
                 next_state.screen = Screen.OVERVIEW
+                return UiTransition(next_state, changed=True, full_refresh=True)
+
+        if event.nodes and state.screen == Screen.MAIN_MENU:
+            normalized_page = normalize_menu_page(state.menu_page)
+            next_state.menu_page = normalized_page
+            node = event.nodes[index]
+            selected = category(state.selected_category_id)
+            if selected.id != state.selected_category_id or not selected.available(node):
+                category_id = next_state.category_id(node)
+                next_state.selected_category_id = category_id
+                metric_id = next_state.metric_id(node)
+                if metric_id:
+                    next_state.metric_by_category[category_id] = metric_id
+                next_state.menu_page = menu_page_for_category(category_id)
+                return UiTransition(next_state, changed=True, full_refresh=True)
+            if normalized_page != state.menu_page:
                 return UiTransition(next_state, changed=True, full_refresh=True)
 
         if event.nodes and state.screen in {Screen.VALUES, Screen.GRAPH}:
@@ -237,11 +293,15 @@ def reduce_ui(
 
         if isinstance(event, LongPress):
             if (
-                action == "center" and state.screen in {Screen.OVERVIEW, Screen.VALUES, Screen.GRAPH}
+                node is not None
+                and action == "center"
+                and state.screen in {Screen.OVERVIEW, Screen.VALUES, Screen.GRAPH}
             ) or (
-                action == "graph_values" and state.screen == Screen.GRAPH
+                node is not None
+                and action == "graph_values"
+                and state.screen == Screen.GRAPH
             ):
-                next_state.screen = Screen.MAIN_MENU
+                next_state = _open_main_menu(next_state, node)
                 return UiTransition(
                     next_state,
                     changed=True,
@@ -249,6 +309,56 @@ def reduce_ui(
                     completed_action="long_menu",
                 )
             return UiTransition(next_state)
+
+        if state.screen == Screen.MAIN_MENU and action in {
+            "menu_previous_page",
+            "menu_next_page",
+        }:
+            next_state.menu_page = move(
+                normalize_menu_page(state.menu_page),
+                MENU_PAGE_COUNT,
+                -1 if action == "menu_previous_page" else 1,
+            )
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action=action,
+            )
+
+        if state.screen == Screen.MAIN_MENU and action == "menu_back":
+            next_state.screen = Screen.OVERVIEW
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action=action,
+            )
+
+        if state.screen == Screen.MAIN_MENU and action in {
+            "menu_tile_nodes",
+            "menu_tile_system",
+        }:
+            return UiTransition(next_state)
+
+        if state.screen == Screen.MAIN_MENU and action is not None and action.startswith("menu_tile_"):
+            if node is None:
+                return UiTransition(next_state)
+            category_id = action.removeprefix("menu_tile_")
+            selected_category = category(category_id)
+            if selected_category.id != category_id or not selected_category.available(node):
+                return UiTransition(next_state)
+            next_state.selected_category_id = category_id
+            metric_id = next_state.metric_id(node)
+            if metric_id:
+                next_state.metric_by_category[category_id] = metric_id
+            next_state.screen = Screen.VALUES
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action=f"category_{category_id}",
+            )
 
         if state.screen in _ACTIVE_SCREENS and action in {"previous", "next"}:
             if len(context.nodes) > 1:
@@ -338,28 +448,6 @@ def reduce_ui(
                     changed=True,
                     full_refresh=True,
                     completed_action="short_center",
-                )
-            return UiTransition(next_state)
-
-        if state.screen == Screen.MAIN_MENU and context.nodes:
-            index = selected_index(
-                context.nodes,
-                state.selected_node_id,
-                state.node_index_hint,
-            )
-            node = context.nodes[index]
-            selected_category = category_at(event.x, event.y)
-            if selected_category and selected_category.available(node):
-                next_state.selected_category_id = selected_category.id
-                metric_id = next_state.metric_id(node)
-                if metric_id:
-                    next_state.metric_by_category[selected_category.id] = metric_id
-                next_state.screen = Screen.VALUES
-                return UiTransition(
-                    next_state,
-                    changed=True,
-                    full_refresh=True,
-                    completed_action=f"category_{selected_category.id}",
                 )
             return UiTransition(next_state)
 

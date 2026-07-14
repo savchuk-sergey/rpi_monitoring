@@ -5,7 +5,7 @@ from math import ceil
 
 from PIL import Image, ImageDraw, ImageFont
 
-from display.categories import CATEGORIES, can_open_graph, category
+from display.categories import can_open_graph, category
 from display.detail_model import ChartMetric, ScaleMode, ThresholdTone, ValueTone
 from display.formatting import (
     boolean as _format_bool,
@@ -23,7 +23,13 @@ from display.navigation import (
     GRAPH_NEXT_METRIC_HITBOX,
     GRAPH_PREVIOUS_METRIC_HITBOX,
     GRAPH_VALUES_HITBOX,
+    MENU_BACK_HITBOX,
+    MENU_NEXT_PAGE_HITBOX,
+    MENU_PAGES,
+    MENU_PREVIOUS_PAGE_HITBOX,
+    MENU_TILE_RECTS,
     VALUES_GRAPH_BUTTON_RECT,
+    normalize_menu_page,
 )
 from display.ui_state import Screen, UiState
 
@@ -78,7 +84,9 @@ def render(
     status, status_color = _status(node, hub_online)
     age = _age(node.get("received_at_utc") or node.get("timestamp_utc"), now)
     if state.screen == Screen.MAIN_MENU:
-        _menu(draw, fonts, node, state)
+        _menu(draw, fonts, node, state, pressed_action)
+        _menu_footer(draw, fonts, state.menu_page, pressed_action)
+        return image
     elif state.screen == Screen.VALUES:
         _detail_header(draw, fonts, node, position, state, status_color, age)
         _details(draw, fonts, node, state, age, pressed_action)
@@ -331,8 +339,9 @@ def _menu(
     fonts: dict[str, Any],
     node: dict[str, Any],
     state: UiState,
+    pressed_action: str | None,
 ) -> None:
-    draw.text((10, 16), "METRICS", font=fonts["detail"], fill=GREEN, anchor="lm")
+    draw.text((10, 16), "MENU", font=fonts["detail"], fill=GREEN, anchor="lm")
     name = _fit(
         draw,
         str(node.get("display_name", node["node_id"])).upper(),
@@ -342,38 +351,97 @@ def _menu(
     draw.text((310, 16), name, font=fonts["small"], fill=MUTED, anchor="rm")
     selected_id = state.category_id(node)
     errors = node.get("collector", {}).get("errors") or []
-    for index, item in enumerate(CATEGORIES):
-        column, row = index % 3, index // 3
-        left, top = column * 107, 32 + row * 80
-        right = 320 if column == 2 else left + 107
-        available = item.available(node)
-        color = (
-            BRIGHT
-            if item.id == selected_id
-            else (
-                AMBER
-                if item.id == "health" and errors
-                else GREEN if available else MUTED
+    page = normalize_menu_page(state.menu_page)
+    for category_id, (left, top, right, bottom) in zip(MENU_PAGES[page], MENU_TILE_RECTS):
+        center_x = (left + right) // 2
+        icon_box = (center_x - 16, top + 9, center_x + 16, top + 41)
+        if category_id in {"nodes", "system"}:
+            title = category_id.upper()
+            color = MUTED
+            subtitle = "LATER"
+            available = False
+            icon = _draw_nodes_menu_icon if category_id == "nodes" else _draw_system_menu_icon
+        else:
+            item = category(category_id)
+            title = item.title
+            available = item.available(node)
+            selected = available and category_id == selected_id
+            color = (
+                BRIGHT
+                if selected
+                else AMBER if category_id == "health" and errors else GREEN if available else MUTED
             )
-        )
-        if item.id == selected_id:
-            draw.rectangle((left + 3, top + 3, right - 4, top + 76), outline=MUTED)
-        icon_left = (left + right) // 2 - 16
-        item.icon(draw, (icon_left, top + 9, icon_left + 32, top + 41), color)
+            subtitle = f"ERR {len(errors)}" if category_id == "health" and errors else (
+                "READY" if available else "NO DATA"
+            )
+            icon = item.icon
+        pressed = available and pressed_action == f"menu_tile_{category_id}"
+        visual_rect = (left + 3, top + 3, right - 4, bottom - 4)
+        if pressed:
+            draw.rectangle(visual_rect, fill=MUTED)
+        elif category_id == selected_id and available:
+            draw.rectangle(visual_rect, outline=MUTED, width=1)
+        foreground = BACKGROUND if pressed else color
+        icon(draw, icon_box, foreground)
         draw.text(
-            ((left + right) // 2, top + 55),
-            item.title,
+            (center_x, top + 55),
+            title,
             font=fonts["small"],
-            fill=color,
+            fill=foreground,
             anchor="mm",
         )
         draw.text(
-            ((left + right) // 2, top + 69),
-            "READY" if available else "NO DATA",
+            (center_x, top + 69),
+            subtitle,
             font=fonts["tiny"],
-            fill=color,
+            fill=foreground,
             anchor="mm",
         )
+
+
+def _draw_nodes_menu_icon(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fill: str,
+) -> None:
+    left, top, right, bottom = box
+    center_x = (left + right) // 2
+    for rectangle in (
+        (center_x - 3, top + 2, center_x + 3, top + 8),
+        (left + 2, bottom - 9, left + 8, bottom - 3),
+        (right - 8, bottom - 9, right - 2, bottom - 3),
+    ):
+        draw.rectangle(rectangle, outline=fill, width=2)
+    for line in (
+        (center_x, top + 8, center_x, top + 14),
+        (left + 5, top + 14, right - 5, top + 14),
+        (left + 5, top + 14, left + 5, bottom - 9),
+        (right - 5, top + 14, right - 5, bottom - 9),
+    ):
+        draw.line(line, fill=fill, width=2)
+
+
+def _draw_system_menu_icon(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fill: str,
+) -> None:
+    left, top, right, bottom = box
+    draw.rectangle(
+        (left + 2, top + 4, right - 2, bottom - 4),
+        outline=fill,
+        width=2,
+    )
+    draw.line(
+        (
+            (left + 7, top + 11),
+            (left + 12, top + 16),
+            (left + 7, top + 21),
+        ),
+        fill=fill,
+        width=2,
+    )
+    draw.line((left + 16, top + 22, right - 7, top + 22), fill=fill, width=2)
 
 
 def _chart(
@@ -583,6 +651,33 @@ def _graph_footer(
         )
 
 
+def _menu_footer(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    page: int,
+    pressed_action: str | None,
+) -> None:
+    page = normalize_menu_page(page)
+    buttons = (
+        ("menu_previous_page", MENU_PREVIOUS_PAGE_HITBOX, "<"),
+        ("menu_back", MENU_BACK_HITBOX, f"BACK {page + 1}/2"),
+        ("menu_next_page", MENU_NEXT_PAGE_HITBOX, ">"),
+    )
+    draw.line((0, 192, 319, 192), fill=MUTED)
+    for action, hitbox, label in buttons:
+        box = (hitbox[0], hitbox[1], hitbox[2] - 1, hitbox[3] - 1)
+        pressed = action == pressed_action
+        if pressed:
+            draw.rectangle(box, fill=MUTED)
+        draw.text(
+            ((box[0] + box[2]) // 2, 216),
+            label,
+            font=fonts["small"] if action == "menu_back" else fonts["label"],
+            fill=BACKGROUND if pressed else GREEN,
+            anchor="mm",
+        )
+
+
 def _footer(
     draw: ImageDraw.ImageDraw,
     fonts: dict[str, Any],
@@ -591,7 +686,6 @@ def _footer(
 ) -> None:
     center_label = {
         Screen.OVERVIEW: "HOLD: MENU",
-        Screen.MAIN_MENU: "SELECT",
         Screen.VALUES: "TAP: OVERVIEW",
     }[screen]
     buttons = (
