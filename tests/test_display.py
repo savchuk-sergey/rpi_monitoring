@@ -1,3 +1,5 @@
+import copy
+import hashlib
 import unittest
 from datetime import datetime, timezone
 
@@ -13,13 +15,9 @@ from display.navigation import (
     NAV_WIDTH,
     NEXT_HITBOX,
     PREVIOUS_HITBOX,
-    DetailView,
-    UiState,
-    ViewMode,
     map_touch,
     move,
     selected_index,
-    should_return_to_overview,
     touch_action,
 )
 from display.renderer import (
@@ -42,6 +40,7 @@ from display.renderer import (
     _value,
     render,
 )
+from display.ui_state import Screen, UiState
 from tools.touch_calibrate import calculate
 
 
@@ -59,6 +58,34 @@ def node(**changes):
     }
     value.update(changes)
     return value
+
+
+def waiting_node():
+    return {
+        "node_id": "waiting-node",
+        "display_name": "waiting-node",
+        "cpu": {
+            "usage_percent": None,
+            "temperature_c": None,
+            "power_w": None,
+        },
+        "memory": {"usage_percent": None},
+        "gpu": [],
+        "collector": {"version": None, "errors": []},
+        "online": False,
+        "waiting": True,
+    }
+
+
+RENDER_HASHES = {
+    "graph": "66b0364742250623eb4d2522b1ac07a168c503658b16c1f00c84e92b565311ff",
+    "graph_with_history": "b497c0beaddc5a3b04d785699cce705e5d7ea89862109cc5d7085eda29d48b8b",
+    "main_menu_capabilities": "21b52b19516410dfed6b3946cbf9cc518fcf17d09c454d7728bcf237ea3db399",
+    "main_menu_legacy": "a73cbc7872ebc0b018673c4409c0b0d5d2281cb7c16fc684c1f637246d9bd19b",
+    "overview_legacy": "7a64eb574d9d969407dec89fbf7ab8493a748dadec645124825d6e9cef15c9d4",
+    "overview_waiting": "7064e7983ea4571ed55586a2d656d493bbce9032bb44374853015a5d7faac6d4",
+    "values": "fd5a1de62d72977ab5a49e5ea83584b9a535033d80f07ac30f441e9d100ba928",
+}
 
 
 class DisplayTests(unittest.TestCase):
@@ -91,10 +118,73 @@ class DisplayTests(unittest.TestCase):
     def test_renderer_is_320_by_240_for_waiting_and_node_states(self) -> None:
         self.assertEqual((320, 240), render(None).size)
         self.assertEqual((320, 240), render(node(), (1, 4)).size)
-        state = UiState(mode=ViewMode.DETAIL)
+        state = UiState(screen=Screen.VALUES)
         self.assertEqual((320, 240), render(node(), ui_state=state).size)
-        state.mode = ViewMode.MENU
+        state.screen = Screen.MAIN_MENU
         self.assertEqual((320, 240), render(node(), ui_state=state).size)
+
+    def test_release_0_03_render_hashes_are_unchanged(self) -> None:
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        capabilities = {
+            "cpu.usage_percent": {
+                "supported": True,
+                "source": "procfs",
+                "reason": None,
+            },
+            "storage.usage_percent": {
+                "supported": True,
+                "source": "statvfs",
+                "reason": None,
+            },
+            "gpu.usage_percent": {
+                "supported": False,
+                "source": None,
+                "reason": "sensor_not_found",
+            },
+        }
+        history = HistoryStore(window_seconds=300, max_samples=180)
+        history.add(
+            node(
+                timestamp_utc="2026-07-12T03:00:00Z",
+                cpu={"usage_percent": 20, "temperature_c": 63, "power_w": None},
+            )
+        )
+        history.add(node(timestamp_utc="2026-07-12T03:00:01Z", online=False))
+        graph_node = node(
+            timestamp_utc="2026-07-12T03:00:02Z",
+            cpu={"usage_percent": 80, "temperature_c": 63, "power_w": None},
+        )
+        history.add(graph_node)
+        scenarios = {
+            "overview_legacy": (node(), UiState(), None),
+            "overview_waiting": (waiting_node(), UiState(), None),
+            "main_menu_legacy": (node(), UiState(screen=Screen.MAIN_MENU), None),
+            "main_menu_capabilities": (
+                node(capabilities=capabilities),
+                UiState(screen=Screen.MAIN_MENU),
+                None,
+            ),
+            "values": (node(), UiState(screen=Screen.VALUES), None),
+            "graph": (node(), UiState(screen=Screen.GRAPH), None),
+            "graph_with_history": (
+                graph_node,
+                UiState(screen=Screen.GRAPH),
+                history,
+            ),
+        }
+        for name, (value, state, history_store) in scenarios.items():
+            with self.subTest(name=name):
+                digest = hashlib.sha256(
+                    render(
+                        value,
+                        (1, 4),
+                        True,
+                        state,
+                        history=history_store,
+                        now=now,
+                    ).tobytes()
+                ).hexdigest()
+                self.assertEqual(RENDER_HASHES[name], digest)
 
     def test_renderer_distinguishes_empty_offline_and_stale_states(self) -> None:
         self.assertNotEqual(render(None).tobytes(), render(None, hub_online=False).tobytes())
@@ -208,17 +298,32 @@ class DisplayTests(unittest.TestCase):
         state = UiState()
         first = node(node_id="a", gpu=[{"usage_percent": 20}])
         second = node(node_id="b")
-        state.select_category(first, "health")
+        state.selected_category_id = "health"
         self.assertEqual("health", state.category_id(first))
         self.assertEqual("health", state.category_id(second))
 
-    def test_detail_and_menu_timeouts_return_to_overview(self) -> None:
-        state = UiState(mode=ViewMode.DETAIL, last_interaction_at=10.0)
-        self.assertFalse(should_return_to_overview(state, 54.9, 45, 15, False))
-        self.assertTrue(should_return_to_overview(state, 55.0, 45, 15, False))
-        self.assertFalse(should_return_to_overview(state, 60.0, 45, 15, True))
-        state.mode = ViewMode.MENU
-        self.assertTrue(should_return_to_overview(state, 25.0, 45, 15, False))
+    def test_future_screens_reject_real_nodes_but_keep_empty_state_safe(self) -> None:
+        for screen in (
+            Screen.NODES,
+            Screen.SYSTEM,
+            Screen.POWER_CONFIRM,
+            Screen.POWER_PENDING,
+            Screen.POWER_ERROR,
+        ):
+            with self.subTest(screen=screen):
+                with self.assertRaises(ValueError):
+                    render(node(), ui_state=UiState(screen=screen))
+                self.assertEqual((320, 240), render(None, ui_state=UiState(screen=screen)).size)
+
+    def test_renderer_does_not_mutate_ui_state(self) -> None:
+        state = UiState(
+            screen=Screen.VALUES,
+            selected_category_id="missing",
+            metric_by_category={"cpu": "missing"},
+        )
+        before = copy.deepcopy(state)
+        render(node(), ui_state=state)
+        self.assertEqual(before, state)
 
     def test_history_deduplicates_timestamps_and_keeps_null_gaps(self) -> None:
         history = HistoryStore(window_seconds=300, max_samples=3)
@@ -247,14 +352,14 @@ class DisplayTests(unittest.TestCase):
         value = node(timestamp_utc="2026-07-12T03:00:00Z")
         history.add(value)
         history.add(node(timestamp_utc="2026-07-12T03:00:02Z", online=False))
-        state = UiState(mode=ViewMode.DETAIL, detail_view=DetailView.GRAPH)
+        state = UiState(screen=Screen.GRAPH)
         graph = render(
             value,
             ui_state=state,
             history=history,
             now=datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc),
         )
-        state.detail_view = DetailView.VALUES
+        state.screen = Screen.VALUES
         values = render(value, ui_state=state, history=history)
         self.assertEqual((320, 240), graph.size)
         self.assertNotEqual(graph.tobytes(), values.tobytes())
@@ -296,17 +401,17 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(60, history.series("desktop", "storage", "used")[0].value)
         self.assertEqual(12500000, history.series("desktop", "network", "down")[0].value)
 
-        state = UiState(mode=ViewMode.DETAIL)
+        state = UiState(screen=Screen.VALUES)
         cpu = render(value, ui_state=state, history=history)
-        state.select_category(value, "memory")
+        state.selected_category_id = "memory"
         memory = render(value, ui_state=state, history=history)
-        state.select_category(value, "gpu")
+        state.selected_category_id = "gpu"
         gpu = render(value, ui_state=state, history=history)
-        state.select_category(value, "health")
+        state.selected_category_id = "health"
         health = render(value, ui_state=state, history=history)
-        state.select_category(value, "storage")
+        state.selected_category_id = "storage"
         storage = render(value, ui_state=state, history=history)
-        state.select_category(value, "network")
+        state.selected_category_id = "network"
         network = render(value, ui_state=state, history=history)
         frames = (cpu, memory, gpu, health, storage, network)
         self.assertEqual({(320, 240)}, {frame.size for frame in frames})

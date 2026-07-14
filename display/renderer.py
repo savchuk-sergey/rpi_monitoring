@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from display.categories import CATEGORIES, category
 from display.history import HistoryStore, Sample
-from display.navigation import DetailView, UiState, ViewMode
+from display.ui_state import Screen, UiState
 
 
 SIZE = (320, 240)
@@ -44,17 +44,17 @@ def render(
     }
     if node is None:
         _empty_state(draw, fonts, hub_online)
-        _footer(draw, fonts, ViewMode.OVERVIEW, pressed_action)
+        _footer(draw, fonts, Screen.OVERVIEW, pressed_action)
         return image
 
     status, status_color = _status(node, hub_online)
     age = _age(node.get("received_at_utc") or node.get("timestamp_utc"), now)
-    if state.mode == ViewMode.MENU:
+    if state.screen == Screen.MAIN_MENU:
         _menu(draw, fonts, node, state)
-    elif state.mode == ViewMode.DETAIL:
+    elif state.screen in {Screen.VALUES, Screen.GRAPH}:
         _detail_header(draw, fonts, node, position, state, status_color, age)
         _details(draw, fonts, node, state, history, age, now)
-    else:
+    elif state.screen == Screen.OVERVIEW:
         _header(draw, fonts, node, position, status, status_color, age)
         cpu = node.get("cpu", {})
         gpu = node.get("gpu") or []
@@ -78,8 +78,10 @@ def render(
         )
         for top, (label, value, unit) in zip((40, 91, 142), metrics):
             _metric_row(draw, fonts, top, label, value, unit)
+    else:
+        raise ValueError(f"unsupported screen: {state.screen.value}")
 
-    _footer(draw, fonts, state.mode, pressed_action)
+    _footer(draw, fonts, state.screen, pressed_action)
     return image
 
 
@@ -148,11 +150,11 @@ def _details(
         if selected:
             draw.line((left + 8, 54, right - 8, 54), fill=BRIGHT, width=2)
 
-    for view, x in ((DetailView.VALUES, 80), (DetailView.GRAPH, 240)):
-        selected = state.detail_view == view
+    for screen, x in ((Screen.VALUES, 80), (Screen.GRAPH, 240)):
+        selected = state.screen == screen
         draw.text(
             (x, 68),
-            view.value.upper(),
+            screen.value.upper(),
             font=fonts["small"],
             fill=BRIGHT if selected else GREEN,
             anchor="mm",
@@ -160,7 +162,7 @@ def _details(
         if selected:
             draw.line((x - 48, 78, x + 48, 78), fill=BRIGHT, width=2)
 
-    if state.detail_view == DetailView.VALUES:
+    if state.screen == Screen.VALUES:
         _values_detail(draw, fonts, node, state)
         return
     samples = (
@@ -563,14 +565,15 @@ def _metric_row(
 def _footer(
     draw: ImageDraw.ImageDraw,
     fonts: dict[str, Any],
-    mode: ViewMode,
+    screen: Screen,
     pressed_action: str | None,
 ) -> None:
     center_label = {
-        ViewMode.OVERVIEW: "HOLD: MENU",
-        ViewMode.DETAIL: "TAP: OVERVIEW",
-        ViewMode.MENU: "SELECT",
-    }[mode]
+        Screen.OVERVIEW: "HOLD: MENU",
+        Screen.MAIN_MENU: "SELECT",
+        Screen.VALUES: "TAP: OVERVIEW",
+        Screen.GRAPH: "TAP: OVERVIEW",
+    }[screen]
     buttons = (
         ("previous", (0, FOOTER_TOP, 63, 239), "<"),
         ("center", (64, FOOTER_TOP, 255, 239), center_label),
