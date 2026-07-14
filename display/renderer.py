@@ -32,6 +32,10 @@ from display.navigation import (
     NODES_NEXT_PAGE_HITBOX,
     NODES_PREVIOUS_PAGE_HITBOX,
     NODES_ROW_RECTS,
+    POWER_CANCEL_CARD_RECT,
+    POWER_HOLD_CARD_RECT,
+    POWER_HOLD_PROGRESS_RECT,
+    POWER_PENDING_BACK_HITBOX,
     SYSTEM_BACK_HITBOX,
     SYSTEM_RESTART_CARD_RECT,
     SYSTEM_SHUTDOWN_CARD_RECT,
@@ -41,7 +45,7 @@ from display.navigation import (
     nodes_page_count,
     nodes_page_items,
 )
-from display.ui_state import Screen, UiState
+from display.ui_state import PowerAction, Screen, UiState, power_hold_progress
 
 
 SIZE = (320, 240)
@@ -76,6 +80,8 @@ def render(
     now: datetime | None = None,
     nodes: tuple[dict[str, Any], ...] | None = None,
     local_target_name: str = "LOCAL DISPLAY",
+    interaction_now: float | None = None,
+    power_confirm_hold_seconds: float = 1.5,
 ) -> Image.Image:
     state = ui_state or UiState()
     target_name = str(
@@ -98,8 +104,26 @@ def render(
         "value": _font(38),
     }
     if state.screen == Screen.SYSTEM:
-        _system(draw, fonts, target_name)
+        _system(draw, fonts, target_name, pressed_action)
         _system_footer(draw, fonts, pressed_action)
+        return image
+    if state.screen == Screen.POWER_CONFIRM:
+        _power_confirmation(
+            draw,
+            fonts,
+            state,
+            target_name,
+            pressed_action,
+            (
+                interaction_now
+                if interaction_now is not None
+                else state.confirmation_started_at or 0.0
+            ),
+            power_confirm_hold_seconds,
+        )
+        return image
+    if state.screen == Screen.POWER_PENDING:
+        _power_pending(draw, fonts, state, target_name, pressed_action)
         return image
     if state.screen == Screen.NODES:
         if snapshot:
@@ -645,6 +669,7 @@ def _system(
     draw: ImageDraw.ImageDraw,
     fonts: dict[str, Any],
     local_target_name: str,
+    pressed_action: str | None,
 ) -> None:
     draw.text((10, 16), "SYSTEM", font=fonts["detail"], fill=GREEN, anchor="lm")
     draw.text(
@@ -654,25 +679,200 @@ def _system(
         fill=MUTED,
         anchor="rm",
     )
-    draw.rectangle(SYSTEM_RESTART_CARD_RECT, outline=AMBER, width=2)
-    _draw_restart_icon(draw, (20, 48, 48, 76), AMBER)
-    draw.text((58, 56), "RESTART", font=fonts["label"], fill=AMBER, anchor="lm")
+    restart_pressed = pressed_action == "system_restart"
+    restart_color = BACKGROUND if restart_pressed else AMBER
+    draw.rectangle(
+        SYSTEM_RESTART_CARD_RECT,
+        fill=MUTED if restart_pressed else BACKGROUND,
+        outline=AMBER,
+        width=2,
+    )
+    _draw_restart_icon(draw, (20, 48, 48, 76), restart_color)
+    draw.text((58, 56), "RESTART", font=fonts["label"], fill=restart_color, anchor="lm")
     draw.text(
         (58, 82),
-        "LOCKED: CONFIRMATION REQUIRED",
+        "TAP TO CONFIRM",
         font=fonts["small"],
-        fill=MUTED,
+        fill=restart_color,
         anchor="lm",
     )
-    draw.rectangle(SYSTEM_SHUTDOWN_CARD_RECT, outline=RED, width=2)
-    _draw_shutdown_icon(draw, (20, 128, 48, 156), RED)
-    draw.text((58, 136), "SHUTDOWN", font=fonts["label"], fill=RED, anchor="lm")
+    shutdown_pressed = pressed_action == "system_shutdown"
+    shutdown_color = BACKGROUND if shutdown_pressed else RED
+    draw.rectangle(
+        SYSTEM_SHUTDOWN_CARD_RECT,
+        fill=MUTED if shutdown_pressed else BACKGROUND,
+        outline=RED,
+        width=2,
+    )
+    _draw_shutdown_icon(draw, (20, 128, 48, 156), shutdown_color)
+    draw.text((58, 136), "SHUTDOWN", font=fonts["label"], fill=shutdown_color, anchor="lm")
     draw.text(
         (58, 162),
-        "LOCKED: CONFIRMATION REQUIRED",
+        "TAP TO CONFIRM",
+        font=fonts["small"],
+        fill=shutdown_color,
+        anchor="lm",
+    )
+
+
+def _power_confirmation(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    state: UiState,
+    local_target_name: str,
+    pressed_action: str | None,
+    interaction_now: float,
+    hold_seconds: float,
+) -> None:
+    action = state.pending_power_action
+    if action == PowerAction.REBOOT:
+        title, consequence, color = (
+            "CONFIRM RESTART",
+            "LOCAL DISPLAY WILL RESTART",
+            AMBER,
+        )
+    elif action == PowerAction.POWEROFF:
+        title, consequence, color = (
+            "CONFIRM SHUTDOWN",
+            "LOCAL DISPLAY WILL SHUT DOWN",
+            RED,
+        )
+    else:
+        title, consequence, color = "CONFIRM ACTION", "NO ACTION SELECTED", MUTED
+    draw.text((10, 16), title, font=fonts["detail"], fill=color, anchor="lm")
+    draw.text(
+        (310, 16),
+        _fit(draw, local_target_name.upper(), fonts["small"], 150),
         font=fonts["small"],
         fill=MUTED,
-        anchor="lm",
+        anchor="rm",
+    )
+    draw.text((160, 64), consequence, font=fonts["label"], fill=color, anchor="mm")
+    draw.text(
+        (160, 94),
+        "REMOTE NODES ARE NOT AFFECTED",
+        font=fonts["small"],
+        fill=GREEN,
+        anchor="mm",
+    )
+    draw.text(
+        (160, 132),
+        "HOLD THE RIGHT BUTTON TO CONFIRM",
+        font=fonts["small"],
+        fill=BRIGHT,
+        anchor="mm",
+    )
+    draw.text(
+        (160, 158),
+        "RELEASE OR MOVE AWAY TO CANCEL",
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="mm",
+    )
+    draw.line((0, 192, 319, 192), fill=MUTED)
+    cancel_pressed = pressed_action == "power_cancel"
+    if cancel_pressed:
+        draw.rectangle(POWER_CANCEL_CARD_RECT, fill=MUTED)
+    draw.text(
+        (55, 216),
+        "CANCEL",
+        font=fonts["label"],
+        fill=BACKGROUND if cancel_pressed else GREEN,
+        anchor="mm",
+    )
+    hold_enabled = action is not None
+    hold_pressed = hold_enabled and pressed_action == "power_hold"
+    draw.rectangle(
+        POWER_HOLD_CARD_RECT,
+        fill=MUTED if hold_pressed else BACKGROUND,
+        outline=color if hold_enabled else MUTED,
+        width=1,
+    )
+    draw.text(
+        (216, 207),
+        "HOLD TO CONFIRM",
+        font=fonts["small"],
+        fill=BACKGROUND if hold_pressed else color,
+        anchor="mm",
+    )
+    draw.rectangle(POWER_HOLD_PROGRESS_RECT, outline=MUTED, width=1)
+    progress = power_hold_progress(state, interaction_now, hold_seconds)
+    if progress > 0:
+        left = POWER_HOLD_PROGRESS_RECT[0] + 1
+        inner_width = POWER_HOLD_PROGRESS_RECT[2] - POWER_HOLD_PROGRESS_RECT[0] - 2
+        draw.rectangle(
+            (
+                left,
+                POWER_HOLD_PROGRESS_RECT[1] + 1,
+                left + round(inner_width * progress),
+                POWER_HOLD_PROGRESS_RECT[3] - 1,
+            ),
+            fill=color,
+        )
+
+
+def _power_pending(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    state: UiState,
+    local_target_name: str,
+    pressed_action: str | None,
+) -> None:
+    action = state.pending_power_action
+    if action == PowerAction.REBOOT:
+        action_title, color = "RESTART CONFIRMED", AMBER
+    elif action == PowerAction.POWEROFF:
+        action_title, color = "SHUTDOWN CONFIRMED", RED
+    else:
+        action_title, color = "NO ACTION", MUTED
+    draw.text((10, 16), "POWER REQUEST", font=fonts["detail"], fill=GREEN, anchor="lm")
+    draw.text(
+        (310, 16),
+        _fit(draw, local_target_name.upper(), fonts["small"], 150),
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="rm",
+    )
+    draw.text((160, 72), action_title, font=fonts["label"], fill=color, anchor="mm")
+    draw.text(
+        (160, 112),
+        "EXECUTION DISABLED",
+        font=fonts["detail"],
+        fill=BRIGHT,
+        anchor="mm",
+    )
+    draw.text(
+        (160, 142),
+        "NO COMMAND WAS SENT",
+        font=fonts["small"],
+        fill=GREEN,
+        anchor="mm",
+    )
+    draw.text(
+        (160, 170),
+        "PHASE 9 REQUIRED FOR EXECUTION",
+        font=fonts["tiny"],
+        fill=MUTED,
+        anchor="mm",
+    )
+    draw.line((0, 192, 319, 192), fill=MUTED)
+    pressed = pressed_action == "power_pending_back"
+    if pressed:
+        draw.rectangle(
+            (
+                POWER_PENDING_BACK_HITBOX[0],
+                POWER_PENDING_BACK_HITBOX[1],
+                POWER_PENDING_BACK_HITBOX[2] - 1,
+                POWER_PENDING_BACK_HITBOX[3] - 1,
+            ),
+            fill=MUTED,
+        )
+    draw.text(
+        (159, 216),
+        "BACK",
+        font=fonts["small"],
+        fill=BACKGROUND if pressed else GREEN,
+        anchor="mm",
     )
 
 

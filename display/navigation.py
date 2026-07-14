@@ -105,6 +105,42 @@ SYSTEM_SHUTDOWN_CARD_RECT: Rect = (
     312,
     180,
 )
+POWER_CANCEL_HITBOX: Rect = (
+    0,
+    192,
+    112,
+    240,
+)
+POWER_HOLD_HITBOX: Rect = (
+    112,
+    192,
+    320,
+    240,
+)
+POWER_PENDING_BACK_HITBOX: Rect = (
+    64,
+    192,
+    256,
+    240,
+)
+POWER_CANCEL_CARD_RECT: Rect = (
+    0,
+    192,
+    111,
+    239,
+)
+POWER_HOLD_CARD_RECT: Rect = (
+    112,
+    192,
+    319,
+    239,
+)
+POWER_HOLD_PROGRESS_RECT: Rect = (
+    124,
+    228,
+    308,
+    236,
+)
 
 
 def move(index: int, count: int, delta: int) -> int:
@@ -246,8 +282,29 @@ def nodes_action_at(
 
 
 def system_action_at(x: int, y: int) -> str | None:
-    left, top, right, bottom = SYSTEM_BACK_HITBOX
-    return "system_back" if left <= x < right and top <= y < bottom else None
+    for action, (left, top, right, bottom) in (
+        ("system_restart", SYSTEM_RESTART_AREA),
+        ("system_shutdown", SYSTEM_SHUTDOWN_AREA),
+        ("system_back", SYSTEM_BACK_HITBOX),
+    ):
+        if left <= x < right and top <= y < bottom:
+            return action
+    return None
+
+
+def power_confirm_action_at(x: int, y: int) -> str | None:
+    for action, (left, top, right, bottom) in (
+        ("power_cancel", POWER_CANCEL_HITBOX),
+        ("power_hold", POWER_HOLD_HITBOX),
+    ):
+        if left <= x < right and top <= y < bottom:
+            return action
+    return None
+
+
+def power_pending_action_at(x: int, y: int) -> str | None:
+    left, top, right, bottom = POWER_PENDING_BACK_HITBOX
+    return "power_pending_back" if left <= x < right and top <= y < bottom else None
 
 
 def map_touch(raw_x: int, raw_y: int, calibration: dict[str, Any]) -> tuple[int, int]:

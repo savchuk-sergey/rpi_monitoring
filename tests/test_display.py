@@ -1,6 +1,8 @@
 import copy
 import hashlib
+import asyncio
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -8,8 +10,9 @@ from unittest.mock import patch
 from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFont
 
 from display.drivers.ili9341 import ILI9341, rgb565
+from display.app import run as run_display
 from display.categories import CATEGORIES, category, category_at, detail_view_at, metric_at
-from display.gestures import GestureKind, TouchRecognizer
+from display.gestures import GestureKind, GestureState, TouchRecognizer
 from display.history import HistoryStore
 from display.navigation import (
     FOOTER_TOP,
@@ -30,6 +33,12 @@ from display.navigation import (
     NODES_PAGE_SIZE,
     NODES_PREVIOUS_PAGE_HITBOX,
     NODES_ROW_RECTS,
+    POWER_CANCEL_CARD_RECT,
+    POWER_CANCEL_HITBOX,
+    POWER_HOLD_CARD_RECT,
+    POWER_HOLD_HITBOX,
+    POWER_HOLD_PROGRESS_RECT,
+    POWER_PENDING_BACK_HITBOX,
     PREVIOUS_HITBOX,
     SYSTEM_BACK_HITBOX,
     SYSTEM_RESTART_AREA,
@@ -50,6 +59,8 @@ from display.navigation import (
     normalize_menu_page,
     normalize_nodes_page,
     ordered_nodes,
+    power_confirm_action_at,
+    power_pending_action_at,
     selected_index,
     system_action_at,
     touch_action,
@@ -91,6 +102,7 @@ from display.renderer import (
 )
 from display.ui_state import (
     DataRefreshed,
+    PowerAction,
     ShortPress,
     Screen,
     UiContext,
@@ -167,12 +179,36 @@ MENU_RENDER_HASHES = {
 }
 
 SYSTEM_RENDER_HASHES = {
-    "system_default_target": "37d06728600d79d2f8839e3a1a0d9913a3dd847ec89df60a9e9872f33b111db2",
-    "system_configured_target": "0a857cf4404128ae5f83d69a33fe8f4e1a83a56af074cd1603459a41b67d4675",
-    "system_long_target": "2dc47dab940cb77cef626530f566706ce7eb1465b1afe7b74afc0c732cb1bf20",
-    "system_no_nodes": "37d06728600d79d2f8839e3a1a0d9913a3dd847ec89df60a9e9872f33b111db2",
-    "system_hub_offline": "37d06728600d79d2f8839e3a1a0d9913a3dd847ec89df60a9e9872f33b111db2",
-    "system_back_pressed": "7b5edc79be977c7da3a7da565f3cb24e217e8857fdaa2cd9af261f0a6bb29d67",
+    "system_default": "59d803c84f6bdd4abbc4ae7cce4bc49ca87d5413ee5a0a90bbbcafb7c63b0bd3",
+    "system_restart_pressed": "f618aaaafe2ae84c0ac2db59fadc9a629edc435d258ab71dfb512eded4417b44",
+    "system_shutdown_pressed": "c872a329f551315ffd5bfc7dd146ef3f05f2ddf6a887900253c4217730dca8c7",
+    "system_back_pressed": "6e80ecb7e0ab65d3a81efc7e9527ee793b22a84401e32d410e056bdf34b357e4",
+    "system_no_nodes": "59d803c84f6bdd4abbc4ae7cce4bc49ca87d5413ee5a0a90bbbcafb7c63b0bd3",
+    "system_hub_offline": "59d803c84f6bdd4abbc4ae7cce4bc49ca87d5413ee5a0a90bbbcafb7c63b0bd3",
+}
+
+CONFIRMATION_RENDER_HASHES = {
+    "confirm_reboot_idle": "7f006d448a1d4bfc266a6a892c69e543e303f68f87d314de3795b44eaeff1edf",
+    "confirm_shutdown_idle": "6d4dddc8f28c9fa173eae95b03863991120b48e7bf4574f69a8edacdc16fb9f0",
+    "confirm_reboot_cancel_pressed": "3eff824a95b2cb9f87ae73ed2be3023718e82c5a8352938e2e4a00eb90ec10bb",
+    "confirm_shutdown_cancel_pressed": "91d3b6fe928609e7341cd5a2f9bb825c51f8eca71b992c49a9b4fcaebc0d7d23",
+    "confirm_reboot_hold_started": "dfc1f9115986fbc9f100511a908a5168194573709584c01ac86c707233a5a415",
+    "confirm_shutdown_hold_started": "901cec5879443385e48e8c45eab41bfb074529ca48bf7642880a5e04099356a9",
+    "confirm_reboot_progress_25": "710a9b98ed117d6e6efa74a949f5e5081f8df826b1e087051cfddcefc0f1fe19",
+    "confirm_reboot_progress_50": "7348ea5b582f607e6a05df92c361feb58c0262222509b3dfc936cf849cd60b8a",
+    "confirm_reboot_progress_75": "66bea1a49adcdab3ff9118bd20f31560f108adf5064a913f0a690697f9266363",
+    "confirm_reboot_progress_99": "0d8b70310660605b15f04fb756c275bf0f3aa31bfa1b2a41b7b7f74751b8473e",
+    "confirm_missing_action": "07e7ab90a853027c450f3d909c920f425d93f0f445c8a311900b9539ed7557d5",
+    "confirm_no_nodes": "7f006d448a1d4bfc266a6a892c69e543e303f68f87d314de3795b44eaeff1edf",
+    "confirm_hub_offline": "7f006d448a1d4bfc266a6a892c69e543e303f68f87d314de3795b44eaeff1edf",
+}
+
+PENDING_RENDER_HASHES = {
+    "pending_reboot": "ca4aaed9263d76c8f7bd4d54a00a6bd16c40ae0e5ec17baefceede530de5f663",
+    "pending_shutdown": "497ed043b827813e8d379c32377a0d1175b1cd3c52d0cc6556746cad87e28067",
+    "pending_reboot_back_pressed": "c4a92498dbbbbe07bd0c9bba5a6ca815d146d4b1d3919a4df1b081fcf9dddc35",
+    "pending_shutdown_back_pressed": "e0c2405cc8cad24fa6a6f4f879df58762cd735bf24dac44e6cdc8020d5f0f967",
+    "pending_missing_action": "76ec27b4ee3316603614c5b49933aa0058b72512bbd77585fe4c014cfa335ff7",
 }
 
 OLD_GRAPH_HASHES = {
@@ -878,29 +914,51 @@ class DisplayTests(unittest.TestCase):
         self.assertIsNone(recognizer.update(True, 100, 210, 1.0))
         self.assertIsNone(recognizer.update(True, 102, 211, 1.2))
         gesture = recognizer.update(False, now=1.3)
+        assert gesture is not None
         self.assertEqual(GestureKind.SHORT, gesture.kind)
         self.assertEqual((101, 210), (gesture.x, gesture.y))
 
     def test_long_gesture_emits_once_with_resistive_jitter(self) -> None:
         recognizer = TouchRecognizer()
         recognizer.update(True, 100, 210, 1.0)
+        gesture = None
         for now, point in ((1.2, (108, 214)), (1.4, (92, 205)), (1.66, (105, 212))):
             gesture = recognizer.update(True, *point, now)
+        assert gesture is not None
         self.assertEqual(GestureKind.LONG, gesture.kind)
         self.assertIsNone(recognizer.update(True, 103, 208, 2.0))
+        self.assertEqual(GestureState.LONG_EMITTED, recognizer.state)
         self.assertIsNone(recognizer.update(False, now=2.1))
+        self.assertIsNone(recognizer.update(True, 100, 210, 2.2))
+        self.assertEqual(GestureState.IDLE, recognizer.state)
 
     def test_large_touch_movement_cancels_the_gesture(self) -> None:
         recognizer = TouchRecognizer()
         recognizer.update(True, 100, 210, 1.0)
         self.assertIsNone(recognizer.update(True, 130, 210, 1.2))
         self.assertIsNone(recognizer.update(True, 132, 211, 1.25))
+        self.assertEqual(GestureState.WAIT_RELEASE, recognizer.state)
         self.assertIsNone(recognizer.update(False, now=1.3))
+
+    def test_movement_after_long_cancels_without_second_gesture(self) -> None:
+        recognizer = TouchRecognizer(long_press_seconds=0.5, movement_tolerance_pixels=10)
+        self.assertIsNone(recognizer.update(True, 100, 210, 1.0))
+        gesture = recognizer.update(True, 100, 210, 1.5)
+        assert gesture is not None
+        self.assertEqual(GestureKind.LONG, gesture.kind)
+        for _ in range(4):
+            self.assertIsNone(recognizer.update(True, 130, 210, 1.6))
+        self.assertEqual(GestureState.WAIT_RELEASE, recognizer.state)
+        self.assertIsNone(recognizer.update(True, 100, 210, 1.7))
+        self.assertIsNone(recognizer.update(False, now=1.8))
 
     def test_category_registry_and_fixed_menu_geometry(self) -> None:
         value = node()
-        self.assertEqual("cpu", category_at(10, 40).id)
-        self.assertEqual("network", category_at(160, 120).id)
+        cpu = category_at(10, 40)
+        network = category_at(160, 120)
+        assert cpu is not None and network is not None
+        self.assertEqual("cpu", cpu.id)
+        self.assertEqual("network", network.id)
         self.assertTrue(category("cpu").available(value))
         self.assertFalse(category("storage").available(value))
         capability = {"supported": True, "source": "statvfs", "reason": None}
@@ -908,7 +966,9 @@ class DisplayTests(unittest.TestCase):
         unsupported = {"supported": False, "source": None, "reason": "sensor_not_found"}
         self.assertFalse(category("gpu").available(node(gpu=[{}], capabilities={"gpu.usage_percent": unsupported})))
         self.assertEqual(100.0, category("cpu").chart_metrics[0].scale.maximum)
-        self.assertEqual("temperature", metric_at("cpu", 150, 50).id)
+        temperature = metric_at("cpu", 150, 50)
+        assert temperature is not None
+        self.assertEqual("temperature", temperature.id)
         self.assertEqual("values", detail_view_at(80, 68))
         self.assertEqual("graph", detail_view_at(240, 68))
 
@@ -929,15 +989,12 @@ class DisplayTests(unittest.TestCase):
                 nodes=(node(),),
             ).size,
         )
-        for screen in (
-            Screen.POWER_CONFIRM,
-            Screen.POWER_PENDING,
-            Screen.POWER_ERROR,
-        ):
-            with self.subTest(screen=screen):
-                with self.assertRaises(ValueError):
-                    render(node(), ui_state=UiState(screen=screen))
-                self.assertEqual((320, 240), render(None, ui_state=UiState(screen=screen)).size)
+        for screen in (Screen.POWER_CONFIRM, Screen.POWER_PENDING):
+            self.assertEqual((320, 240), render(node(), ui_state=UiState(screen=screen)).size)
+            self.assertEqual((320, 240), render(None, ui_state=UiState(screen=screen)).size)
+        with self.assertRaises(ValueError):
+            render(node(), ui_state=UiState(screen=Screen.POWER_ERROR))
+        self.assertEqual((320, 240), render(None, ui_state=UiState(screen=Screen.POWER_ERROR)).size)
 
     def test_renderer_does_not_mutate_ui_state(self) -> None:
         state = UiState(
@@ -2000,7 +2057,7 @@ class DisplayTests(unittest.TestCase):
             render(None, ui_state=state, nodes=()).tobytes(),
         )
 
-    def test_phase_7_system_geometry_and_action_boundaries_are_exact(self) -> None:
+    def test_phase_8_power_geometry_and_action_boundaries_are_exact(self) -> None:
         self.assertEqual((0, 32, 320, 104), SYSTEM_RESTART_AREA)
         self.assertEqual((0, 112, 320, 184), SYSTEM_SHUTDOWN_AREA)
         self.assertEqual((64, 192, 256, 240), SYSTEM_BACK_HITBOX)
@@ -2019,16 +2076,46 @@ class DisplayTests(unittest.TestCase):
             SYSTEM_BACK_HITBOX[2] - SYSTEM_BACK_HITBOX[0],
             SYSTEM_BACK_HITBOX[3] - SYSTEM_BACK_HITBOX[1],
         ))
-        for point in ((64, 192), (255, 239)):
-            self.assertEqual("system_back", system_action_at(*point))
-        for point in (
-            (63, 210), (256, 210), (0, 32), (319, 103),
-            (0, 112), (319, 183), (100, 191), (100, 240),
-            (-1, 210), (320, 210),
-        ):
+        self.assertEqual("system_restart", system_action_at(0, 32))
+        self.assertEqual("system_restart", system_action_at(319, 103))
+        self.assertEqual("system_shutdown", system_action_at(0, 112))
+        self.assertEqual("system_shutdown", system_action_at(319, 183))
+        self.assertEqual("system_back", system_action_at(64, 192))
+        for point in ((63, 210), (256, 210), (100, 191), (100, 240), (-1, 210), (320, 210)):
             self.assertIsNone(system_action_at(*point))
 
-    def test_phase_7_system_renderer_routing_identity_geometry_and_locking(self) -> None:
+        self.assertEqual((0, 192, 112, 240), POWER_CANCEL_HITBOX)
+        self.assertEqual((112, 192, 320, 240), POWER_HOLD_HITBOX)
+        self.assertEqual((64, 192, 256, 240), POWER_PENDING_BACK_HITBOX)
+        self.assertEqual((0, 192, 111, 239), POWER_CANCEL_CARD_RECT)
+        self.assertEqual((112, 192, 319, 239), POWER_HOLD_CARD_RECT)
+        self.assertEqual((124, 228, 308, 236), POWER_HOLD_PROGRESS_RECT)
+        self.assertEqual((112, 48), (
+            POWER_CANCEL_HITBOX[2] - POWER_CANCEL_HITBOX[0],
+            POWER_CANCEL_HITBOX[3] - POWER_CANCEL_HITBOX[1],
+        ))
+        self.assertEqual((208, 48), (
+            POWER_HOLD_HITBOX[2] - POWER_HOLD_HITBOX[0],
+            POWER_HOLD_HITBOX[3] - POWER_HOLD_HITBOX[1],
+        ))
+        self.assertEqual(POWER_CANCEL_HITBOX[2], POWER_HOLD_HITBOX[0])
+        self.assertLess(POWER_CANCEL_HITBOX[2] - POWER_CANCEL_HITBOX[0], POWER_HOLD_HITBOX[2] - POWER_HOLD_HITBOX[0])
+        self.assertTrue(
+            POWER_HOLD_HITBOX[0] <= POWER_HOLD_PROGRESS_RECT[0]
+            < POWER_HOLD_PROGRESS_RECT[2] <= POWER_HOLD_HITBOX[2]
+        )
+        self.assertEqual(("power_cancel", "power_hold"), (
+            power_confirm_action_at(0, 192), power_confirm_action_at(319, 239)
+        ))
+        self.assertEqual("power_pending_back", power_pending_action_at(64, 192))
+        for resolver, points in (
+            (power_confirm_action_at, ((-1, 210), (320, 210), (10, 191), (10, 240))),
+            (power_pending_action_at, ((63, 210), (256, 210), (160, 191), (160, 240))),
+        ):
+            for point in points:
+                self.assertIsNone(resolver(*point))
+
+    def test_phase_8_system_renderer_routing_identity_and_pressed_controls(self) -> None:
         state = UiState(screen=Screen.SYSTEM)
         for helper in (
             "_empty_state", "_header", "_footer", "_menu", "_menu_footer",
@@ -2061,14 +2148,20 @@ class DisplayTests(unittest.TestCase):
         self.assertGreaterEqual(difference[0], 120)
         self.assertLessEqual(difference[2], 320)
         self.assertLessEqual(difference[3], 32)
-        self.assertEqual(
-            default.tobytes(),
-            render(None, ui_state=state, pressed_action="system_restart").tobytes(),
-        )
-        self.assertEqual(
-            default.tobytes(),
-            render(None, ui_state=state, pressed_action="system_shutdown").tobytes(),
-        )
+        for action, bounds in (
+            ("system_restart", SYSTEM_RESTART_CARD_RECT),
+            ("system_shutdown", SYSTEM_SHUTDOWN_CARD_RECT),
+            ("system_back", SYSTEM_BACK_HITBOX),
+        ):
+            difference = ImageChops.difference(
+                default,
+                render(None, ui_state=state, pressed_action=action),
+            ).getbbox()
+            self.assertIsNotNone(difference)
+            self.assertGreaterEqual(difference[0], bounds[0])
+            self.assertGreaterEqual(difference[1], bounds[1])
+            self.assertLessEqual(difference[2], bounds[2])
+            self.assertLessEqual(difference[3], bounds[3])
 
         text_calls = []
         rectangle_calls = []
@@ -2105,12 +2198,12 @@ class DisplayTests(unittest.TestCase):
         drawn_text = {(xy, args[0], kwargs.get("fill"), kwargs.get("anchor")) for xy, args, kwargs in text_calls}
         self.assertIn(((10, 16), "SYSTEM", GREEN, "lm"), drawn_text)
         self.assertIn(((58, 56), "RESTART", AMBER, "lm"), drawn_text)
-        self.assertIn(((58, 82), "LOCKED: CONFIRMATION REQUIRED", MUTED, "lm"), drawn_text)
+        self.assertIn(((58, 82), "TAP TO CONFIRM", AMBER, "lm"), drawn_text)
         self.assertIn(((58, 136), "SHUTDOWN", RED, "lm"), drawn_text)
-        self.assertIn(((58, 162), "LOCKED: CONFIRMATION REQUIRED", MUTED, "lm"), drawn_text)
+        self.assertIn(((58, 162), "TAP TO CONFIRM", RED, "lm"), drawn_text)
         self.assertNotIn("REMOTE A", {args[0] for _, args, _ in text_calls})
-        self.assertIn((SYSTEM_RESTART_CARD_RECT, (), {"outline": AMBER, "width": 2}), rectangle_calls)
-        self.assertIn((SYSTEM_SHUTDOWN_CARD_RECT, (), {"outline": RED, "width": 2}), rectangle_calls)
+        self.assertIn((SYSTEM_RESTART_CARD_RECT, (), {"fill": BACKGROUND, "outline": AMBER, "width": 2}), rectangle_calls)
+        self.assertIn((SYSTEM_SHUTDOWN_CARD_RECT, (), {"fill": BACKGROUND, "outline": RED, "width": 2}), rectangle_calls)
         self.assertIn(((22, 50, 46, 74), (35, 330), {"fill": AMBER, "width": 2}), arc_calls)
         self.assertIn((((41, 49), (48, 50), (45, 57)), (), {"fill": AMBER}), polygon_calls)
         self.assertIn(((22, 130, 46, 154), (), {"outline": RED, "width": 2}), ellipse_calls)
@@ -2126,23 +2219,15 @@ class DisplayTests(unittest.TestCase):
         self.assertLessEqual(difference[3], SYSTEM_BACK_HITBOX[3])
         self.assertEqual(ImageColor.getrgb(MUTED), pressed.getpixel((65, 193)))
 
-    def test_phase_7_system_and_changed_menu_hashes_are_exact(self) -> None:
-        value = complete_v2_node()
+    def test_phase_8_system_hashes_are_exact(self) -> None:
         state = UiState(screen=Screen.SYSTEM)
         scenarios = {
-            "system_default_target": render(None, ui_state=state),
-            "system_configured_target": render(
-                value, ui_state=state, nodes=(value,), local_target_name="display-rpi"
-            ),
-            "system_long_target": render(
-                value,
-                ui_state=state,
-                nodes=(value,),
-                local_target_name="an extremely long configured local display target",
-            ),
+            "system_default": render(None, ui_state=state),
+            "system_restart_pressed": render(None, ui_state=state, pressed_action="system_restart"),
+            "system_shutdown_pressed": render(None, ui_state=state, pressed_action="system_shutdown"),
+            "system_back_pressed": render(None, ui_state=state, pressed_action="system_back"),
             "system_no_nodes": render(None, ui_state=state, nodes=()),
             "system_hub_offline": render(None, hub_online=False, ui_state=state, nodes=()),
-            "system_back_pressed": render(None, ui_state=state, pressed_action="system_back"),
         }
         self.assertEqual(set(SYSTEM_RENDER_HASHES), set(scenarios))
         for name, image in scenarios.items():
@@ -2151,25 +2236,190 @@ class DisplayTests(unittest.TestCase):
                 hashlib.sha256(image.tobytes()).hexdigest(),
             )
         self.assertEqual(
-            scenarios["system_default_target"].tobytes(),
+            scenarios["system_default"].tobytes(),
             scenarios["system_no_nodes"].tobytes(),
         )
         self.assertEqual(
-            scenarios["system_default_target"].tobytes(),
+            scenarios["system_default"].tobytes(),
             scenarios["system_hub_offline"].tobytes(),
         )
 
-    def test_phase_7_application_uses_local_target_config_without_power_execution(self) -> None:
+    def test_phase_8_confirmation_pending_routing_progress_and_target_isolation(self) -> None:
+        value_a = node(node_id="a", display_name="REMOTE A")
+        value_b = node(node_id="b", display_name="REMOTE B")
+        confirm = UiState(screen=Screen.POWER_CONFIRM, pending_power_action=PowerAction.REBOOT)
+        pending = UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT)
+        blocked_helpers = (
+            "_empty_state", "_header", "_footer", "_menu", "_nodes",
+            "_detail_header", "_values_detail", "_graph_footer",
+        )
+        for state in (confirm, pending):
+            for helper in blocked_helpers:
+                with self.subTest(screen=state.screen, helper=helper), patch(
+                    f"display.renderer.{helper}"
+                ) as blocked:
+                    render(None, hub_online=False, ui_state=state, nodes=())
+                    blocked.assert_not_called()
+
+        frames = (
+            render(value_a, ui_state=confirm, nodes=(value_a,), local_target_name="display-rpi"),
+            render(value_b, ui_state=confirm, nodes=(value_b,), local_target_name="display-rpi"),
+            render(None, ui_state=confirm, nodes=(), local_target_name="display-rpi"),
+            render(None, hub_online=False, ui_state=confirm, nodes=(), local_target_name="display-rpi"),
+        )
+        self.assertTrue(all(frame.tobytes() == frames[0].tobytes() for frame in frames[1:]))
+
+        for action, bounds in (
+            ("power_cancel", POWER_CANCEL_CARD_RECT),
+            ("power_hold", POWER_HOLD_CARD_RECT),
+        ):
+            difference = ImageChops.difference(
+                frames[0],
+                render(None, ui_state=confirm, pressed_action=action, local_target_name="display-rpi"),
+            ).getbbox()
+            self.assertIsNotNone(difference)
+            self.assertGreaterEqual(difference[0], bounds[0])
+            self.assertGreaterEqual(difference[1], bounds[1])
+            self.assertLessEqual(difference[2], bounds[2] + 1)
+            self.assertLessEqual(difference[3], bounds[3] + 1)
+
+        original_rectangle = ImageDraw.ImageDraw.rectangle
+        for progress, now in ((0, 10), (0.25, 10.375), (0.5, 10.75), (0.75, 11.125), (0.99, 11.485), (1, 11.5)):
+            calls = []
+
+            def record(draw, xy, *args, **kwargs):
+                calls.append((xy, kwargs))
+                return original_rectangle(draw, xy, *args, **kwargs)
+
+            active = UiState(
+                screen=Screen.POWER_CONFIRM,
+                pending_power_action=PowerAction.REBOOT,
+                confirmation_started_at=10,
+            )
+            with patch.object(ImageDraw.ImageDraw, "rectangle", new=record):
+                render(
+                    None,
+                    ui_state=active,
+                    interaction_now=now,
+                    power_confirm_hold_seconds=1.5,
+                )
+            fills = [xy for xy, kwargs in calls if kwargs.get("fill") == AMBER]
+            if progress == 0:
+                self.assertEqual([], fills)
+            else:
+                self.assertEqual(1, len(fills))
+                left, top, right, bottom = fills[0]
+                self.assertEqual((125, 229, 235), (left, top, bottom))
+                self.assertEqual(125 + round(182 * progress), right)
+                self.assertLessEqual(right, 307)
+
+        text_calls = []
+        original_text = ImageDraw.ImageDraw.text
+
+        def record_text(draw, xy, text, *args, **kwargs):
+            text_calls.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_text):
+            render(None, ui_state=pending, local_target_name="display-rpi")
+        rendered = {text for _, text, _ in text_calls}
+        for required in (
+            "EXECUTION DISABLED",
+            "NO COMMAND WAS SENT",
+            "PHASE 9 REQUIRED FOR EXECUTION",
+        ):
+            self.assertIn(required, rendered)
+        self.assertNotIn("REMOTE A", rendered)
+
+        normal_pending = render(None, ui_state=pending)
+        pressed_pending = render(None, ui_state=pending, pressed_action="power_pending_back")
+        difference = ImageChops.difference(normal_pending, pressed_pending).getbbox()
+        self.assertIsNotNone(difference)
+        self.assertGreaterEqual(difference[0], POWER_PENDING_BACK_HITBOX[0])
+        self.assertGreaterEqual(difference[1], POWER_PENDING_BACK_HITBOX[1])
+        self.assertLessEqual(difference[2], POWER_PENDING_BACK_HITBOX[2])
+        self.assertLessEqual(difference[3], POWER_PENDING_BACK_HITBOX[3])
+
+    def test_phase_8_confirmation_and_pending_hashes_are_exact(self) -> None:
+        reboot = UiState(screen=Screen.POWER_CONFIRM, pending_power_action=PowerAction.REBOOT)
+        shutdown = UiState(screen=Screen.POWER_CONFIRM, pending_power_action=PowerAction.POWEROFF)
+        active = UiState(
+            screen=Screen.POWER_CONFIRM,
+            pending_power_action=PowerAction.REBOOT,
+            confirmation_started_at=10,
+        )
+        value = complete_v2_node()
+        confirmation = {
+            "confirm_reboot_idle": render(None, ui_state=reboot, local_target_name="display-rpi"),
+            "confirm_shutdown_idle": render(None, ui_state=shutdown, local_target_name="display-rpi"),
+            "confirm_reboot_cancel_pressed": render(None, ui_state=reboot, pressed_action="power_cancel", local_target_name="display-rpi"),
+            "confirm_shutdown_cancel_pressed": render(None, ui_state=shutdown, pressed_action="power_cancel", local_target_name="display-rpi"),
+            "confirm_reboot_hold_started": render(None, ui_state=active, pressed_action="power_hold", interaction_now=10, local_target_name="display-rpi"),
+            "confirm_shutdown_hold_started": render(None, ui_state=replace(active, pending_power_action=PowerAction.POWEROFF), pressed_action="power_hold", interaction_now=10, local_target_name="display-rpi"),
+            "confirm_reboot_progress_25": render(None, ui_state=active, interaction_now=10.375, local_target_name="display-rpi"),
+            "confirm_reboot_progress_50": render(None, ui_state=active, interaction_now=10.75, local_target_name="display-rpi"),
+            "confirm_reboot_progress_75": render(None, ui_state=active, interaction_now=11.125, local_target_name="display-rpi"),
+            "confirm_reboot_progress_99": render(None, ui_state=active, interaction_now=11.485, local_target_name="display-rpi"),
+            "confirm_missing_action": render(None, ui_state=UiState(screen=Screen.POWER_CONFIRM), local_target_name="display-rpi"),
+            "confirm_no_nodes": render(None, ui_state=reboot, nodes=(), local_target_name="display-rpi"),
+            "confirm_hub_offline": render(None, hub_online=False, ui_state=reboot, nodes=(), local_target_name="display-rpi"),
+        }
+        self.assertEqual(set(CONFIRMATION_RENDER_HASHES), set(confirmation))
+        for name, image in confirmation.items():
+            self.assertEqual(CONFIRMATION_RENDER_HASHES[name], hashlib.sha256(image.tobytes()).hexdigest())
+        self.assertEqual(
+            confirmation["confirm_reboot_idle"].tobytes(),
+            confirmation["confirm_no_nodes"].tobytes(),
+        )
+        self.assertEqual(
+            confirmation["confirm_reboot_idle"].tobytes(),
+            confirmation["confirm_hub_offline"].tobytes(),
+        )
+
+        pending = {
+            "pending_reboot": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT), local_target_name="display-rpi"),
+            "pending_shutdown": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.POWEROFF), local_target_name="display-rpi"),
+            "pending_reboot_back_pressed": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT), pressed_action="power_pending_back", local_target_name="display-rpi"),
+            "pending_shutdown_back_pressed": render(None, ui_state=UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.POWEROFF), pressed_action="power_pending_back", local_target_name="display-rpi"),
+            "pending_missing_action": render(None, ui_state=UiState(screen=Screen.POWER_PENDING), local_target_name="display-rpi"),
+        }
+        self.assertEqual(set(PENDING_RENDER_HASHES), set(pending))
+        for name, image in pending.items():
+            self.assertEqual(PENDING_RENDER_HASHES[name], hashlib.sha256(image.tobytes()).hexdigest())
+
+    def test_phase_8_application_integrates_hold_without_power_execution(self) -> None:
         app_source = Path("display/app.py").read_text()
         self.assertIn('config.get("local_node_id")', app_source)
         self.assertIn('or "LOCAL DISPLAY"', app_source)
         self.assertIn("local_target_name=local_target_name", app_source)
         self.assertIn("local_target_name,", app_source)
+        self.assertEqual(1, app_source.count('config.get(\n            "power_confirm_hold_seconds"'))
+        self.assertIn("power_confirm_hold_seconds must be positive", app_source)
+        self.assertIn("PowerHoldStarted(now)", app_source)
+        self.assertIn("PowerHoldTick(now)", app_source)
+        self.assertIn("PowerHoldCancelled(now)", app_source)
+        self.assertIn("PowerHoldReleased(now)", app_source)
+        self.assertIn("interaction_now=now", app_source)
+        self.assertIn("power_confirm_hold_seconds=power_confirm_hold_seconds", app_source)
+        self.assertIn("power_hold_progress(", app_source)
         display_source = "\n".join(
             path.read_text() for path in Path("display").glob("*.py")
         )
-        for forbidden in ("subprocess", "os.system", "systemctl", "power.sock", "AF_UNIX"):
+        for forbidden in ("subprocess", "os.system", "socket", "systemctl", "power.sock", "AF_UNIX"):
             self.assertNotIn(forbidden, display_source)
+        hub_source = Path("hub/app.py").read_text()
+        self.assertNotIn('"/api/v1/power', hub_source)
+        self.assertNotIn('"/power', hub_source)
+
+    def test_phase_8_application_rejects_non_positive_hold_duration(self) -> None:
+        for value in (0, -1):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError,
+                "power_confirm_hold_seconds must be positive",
+            ):
+                asyncio.run(run_display({"power_confirm_hold_seconds": value}))
+        with self.assertRaises(KeyError):
+            asyncio.run(run_display({"power_confirm_hold_seconds": 0.1}))
 
     def test_calibration_maps_and_clamps_coordinates(self) -> None:
         calibration = {
@@ -2206,7 +2456,7 @@ class DisplayTests(unittest.TestCase):
         lcd = object.__new__(ILI9341)
         calls = []
         lcd._write = lambda command, data=b"": calls.append((command, bytes(data)))
-        lcd._command = lambda command: calls.append((command, b""))
+        lcd._command = lambda value: calls.append((value, b""))
         lcd._data = lambda data: calls.append((-1, bytes(data)))
         lcd.show_region(Image.new("RGB", (320, 240)), (10, 20, 12, 22))
         self.assertEqual((0x2A, bytes.fromhex("000a000b")), calls[0])

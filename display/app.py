@@ -11,16 +11,22 @@ from display.drivers.ili9341 import ILI9341
 from display.drivers.xpt2046 import XPT2046
 from display.gestures import GestureKind, GestureState, TouchRecognizer
 from display.history import HistoryStore
-from display.navigation import map_touch, selected_index
+from display.navigation import map_touch, power_confirm_action_at, selected_index
 from display.ui_state import (
     AutoRotateTick,
     DataRefreshed,
     InactivityTick,
     LongPress,
+    PowerHoldCancelled,
+    PowerHoldReleased,
+    PowerHoldStarted,
+    PowerHoldTick,
+    Screen,
     ShortPress,
     UiContext,
     UiEffect,
     UiState,
+    power_hold_progress,
     reduce_ui,
     visible_action_at,
 )
@@ -35,6 +41,16 @@ async def run(config: dict) -> None:
         config.get("local_node_id")
         or "LOCAL DISPLAY"
     ).strip() or "LOCAL DISPLAY"
+    power_confirm_hold_seconds = float(
+        config.get(
+            "power_confirm_hold_seconds",
+            1.5,
+        )
+    )
+    if power_confirm_hold_seconds <= 0:
+        raise ValueError(
+            "power_confirm_hold_seconds must be positive"
+        )
     calibration = json.loads(Path(config["calibration_file"]).read_text())
     lcd = ILI9341(int(config.get("lcd_speed_hz", 4_000_000)))
     touch = XPT2046(int(config.get("touch_speed_hz", 2_000_000)))
@@ -92,6 +108,7 @@ async def run(config: dict) -> None:
                         detail_timeout,
                         menu_timeout,
                         auto_rotate,
+                        power_confirm_hold_seconds,
                     )
                     transition = reduce_ui(
                         state,
@@ -112,6 +129,7 @@ async def run(config: dict) -> None:
                     detail_timeout,
                     menu_timeout,
                     auto_rotate,
+                    power_confirm_hold_seconds,
                 )
                 gesture = None
                 if touch.pressed:
@@ -136,12 +154,79 @@ async def run(config: dict) -> None:
                         )
                         feedback_pending = pressed_action is not None
                         changed |= feedback_pending
+                        if (
+                            pressed_action == "power_hold"
+                            and state.screen == Screen.POWER_CONFIRM
+                        ):
+                            transition = reduce_ui(
+                                state,
+                                PowerHoldStarted(now),
+                                context,
+                            )
+                            state = transition.state
+                            changed |= transition.changed
+                            full_refresh |= transition.full_refresh
+                            if transition.completed_action is not None:
+                                completed_action = transition.completed_action
+                            assert transition.effect is UiEffect.NONE
+                    if (
+                        pressed_action == "power_hold"
+                        and state.screen == Screen.POWER_CONFIRM
+                    ):
+                        if (
+                            recognizer.state != GestureState.WAIT_RELEASE
+                            and power_confirm_action_at(x, y) == "power_hold"
+                        ):
+                            transition = reduce_ui(
+                                state,
+                                PowerHoldTick(now),
+                                context,
+                            )
+                            state = transition.state
+                            changed |= transition.changed
+                            full_refresh |= transition.full_refresh
+                            if transition.completed_action is not None:
+                                completed_action = transition.completed_action
+                            assert transition.effect is UiEffect.NONE
+                            if state.screen == Screen.POWER_PENDING:
+                                pressed_action = None
+                                feedback_pending = False
+                        else:
+                            transition = reduce_ui(
+                                state,
+                                PowerHoldCancelled(now),
+                                context,
+                            )
+                            state = transition.state
+                            changed |= transition.changed
+                            full_refresh |= transition.full_refresh
+                            if transition.completed_action is not None:
+                                completed_action = transition.completed_action
+                            assert transition.effect is UiEffect.NONE
+                            pressed_action = None
+                            feedback_pending = False
                     elif recognizer.state == GestureState.WAIT_RELEASE and pressed_action:
                         pressed_action = None
                         feedback_pending = False
                         changed = True
                 else:
                     gesture = recognizer.update(False, now=now)
+                    released_action = pressed_action
+                    if (
+                        released_action == "power_hold"
+                        and state.screen == Screen.POWER_CONFIRM
+                    ):
+                        transition = reduce_ui(
+                            state,
+                            PowerHoldReleased(now),
+                            context,
+                        )
+                        state = transition.state
+                        changed |= transition.changed
+                        full_refresh |= transition.full_refresh
+                        if transition.completed_action is not None:
+                            completed_action = transition.completed_action
+                        assert transition.effect is UiEffect.NONE
                     if pressed_action:
                         pressed_action = None
                         changed = True
@@ -202,6 +287,17 @@ async def run(config: dict) -> None:
                         state.menu_page,
                         state.nodes_page,
                         local_target_name,
+                        state.pending_power_action.value if state.pending_power_action else None,
+                        state.confirmation_started_at,
+                        power_confirm_hold_seconds,
+                        round(
+                            power_hold_progress(
+                                state,
+                                now,
+                                power_confirm_hold_seconds,
+                            )
+                            * 20
+                        ),
                         pressed_action,
                         int(now),
                     ),
@@ -224,6 +320,8 @@ async def run(config: dict) -> None:
                         pressed_action,
                         nodes=tuple(nodes),
                         local_target_name=local_target_name,
+                        interaction_now=now,
+                        power_confirm_hold_seconds=power_confirm_hold_seconds,
                     )
                     render_ms = (loop.time() - render_started) * 1000
                     box = ImageChops.difference(last_frame, frame).getbbox()

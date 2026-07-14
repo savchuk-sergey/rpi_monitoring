@@ -13,12 +13,17 @@ from display.ui_state import (
     InactivityTick,
     LongPress,
     PowerAction,
+    PowerHoldCancelled,
+    PowerHoldReleased,
+    PowerHoldStarted,
+    PowerHoldTick,
     Screen,
     ShortPress,
     UiContext,
     UiEffect,
     UiState,
     _select_graph_metric,
+    power_hold_progress,
     reduce_ui,
     visible_action_at,
 )
@@ -64,8 +69,9 @@ def context(
     detail: float = 45.0,
     menu: float = 15.0,
     rotate: float = 10.0,
+    hold: float = 1.5,
 ) -> UiContext:
-    return UiContext(nodes, pause, detail, menu, rotate)
+    return UiContext(nodes, pause, detail, menu, rotate, hold)
 
 
 class UiStateTests(unittest.TestCase):
@@ -90,6 +96,7 @@ class UiStateTests(unittest.TestCase):
         )
         self.assertEqual("none", UiEffect.NONE.value)
         self.assertIsNone(UiState().pending_power_action)
+        self.assertEqual(1.5, UiContext((), 1, 2, 3, 4).power_confirm_hold_seconds)
 
     def test_resolution_is_read_only_and_capability_aware(self) -> None:
         state = UiState(
@@ -1322,10 +1329,10 @@ class UiStateTests(unittest.TestCase):
         self.assertEqual(3, NODES_PAGE_SIZE)
         self.assertEqual(2, nodes_page_count(len(nodes)))
 
-    def test_phase_7_system_navigation_locked_actions_refresh_and_timeout(self) -> None:
+    def test_phase_8_system_opens_local_power_confirmation_and_cancel_is_safe(self) -> None:
         nodes = (node("a"), node("b"))
-        preserved = UiState(
-            screen=Screen.MAIN_MENU,
+        system = UiState(
+            screen=Screen.SYSTEM,
             selected_node_id="a",
             node_index_hint=0,
             selected_category_id="network",
@@ -1333,100 +1340,140 @@ class UiStateTests(unittest.TestCase):
             selected_gpu_index=2,
             menu_page=1,
             nodes_page=3,
-            pending_power_action=PowerAction.REBOOT,
-            confirmation_started_at=7,
             last_rotation_at=9,
         )
-        opened = reduce_ui(preserved, ShortPress(240, 152, 10), context(nodes))
-        self.assertEqual((Screen.SYSTEM, "open_system", True, True, UiEffect.NONE), (
-            opened.state.screen,
-            opened.completed_action,
-            opened.changed,
-            opened.full_refresh,
-            opened.effect,
-        ))
-        for field in (
-            "selected_node_id", "node_index_hint", "selected_category_id",
-            "metric_by_category", "selected_gpu_index", "menu_page", "nodes_page",
-            "pending_power_action", "confirmation_started_at", "last_rotation_at",
-        ):
-            self.assertEqual(getattr(preserved, field), getattr(opened.state, field))
+        for selected, snapshot in ((nodes[0], nodes), (None, ()), (None, None)):
+            self.assertEqual("system_restart", visible_action_at(system, selected, 0, 32, snapshot))
+            self.assertEqual("system_shutdown", visible_action_at(system, selected, 319, 183, snapshot))
+            self.assertEqual("system_back", visible_action_at(system, selected, 64, 192, snapshot))
 
-        system = opened.state
-        for action in (
-            "system_restart", "system_shutdown", "restart", "shutdown", "reboot", "poweroff",
+        for point, action, power_action, completed in (
+            ((20, 50), "system_restart", PowerAction.REBOOT, "open_reboot_confirmation"),
+            ((20, 130), "system_shutdown", PowerAction.POWEROFF, "open_poweroff_confirmation"),
         ):
-            with self.subTest(action=action), patch(
-                "display.ui_state.visible_action_at", return_value=action
-            ):
-                locked = reduce_ui(system, ShortPress(20, 50, 11), context(nodes))
-            self.assertFalse(locked.changed)
-            self.assertFalse(locked.full_refresh)
-            self.assertIsNone(locked.completed_action)
-            self.assertIs(UiEffect.NONE, locked.effect)
-            self.assertEqual(system.pending_power_action, locked.state.pending_power_action)
-            self.assertEqual(system.confirmation_started_at, locked.state.confirmation_started_at)
+            with self.subTest(action=action):
+                opened = reduce_ui(system, ShortPress(*point, 10), context(nodes))
+                self.assertEqual((Screen.POWER_CONFIRM, power_action, completed, True, True), (
+                    opened.state.screen,
+                    opened.state.pending_power_action,
+                    opened.completed_action,
+                    opened.changed,
+                    opened.full_refresh,
+                ))
+                self.assertIsNone(opened.state.confirmation_started_at)
+                for field in (
+                    "selected_node_id", "node_index_hint", "selected_category_id",
+                    "metric_by_category", "selected_gpu_index", "menu_page", "nodes_page",
+                    "last_rotation_at",
+                ):
+                    self.assertEqual(getattr(system, field), getattr(opened.state, field))
+                cancelled = reduce_ui(opened.state, ShortPress(50, 210, 11), context(nodes))
+                self.assertEqual((Screen.SYSTEM, None, None, "power_cancel"), (
+                    cancelled.state.screen,
+                    cancelled.state.pending_power_action,
+                    cancelled.state.confirmation_started_at,
+                    cancelled.completed_action,
+                ))
+                self.assertIs(UiEffect.NONE, cancelled.effect)
 
-        for point in ((160, 210), (20, 50), (20, 130), (10, 190)):
+        for point in ((20, 50), (20, 130)):
             held = reduce_ui(system, LongPress(*point, 12), context(nodes))
             self.assertEqual(Screen.SYSTEM, held.state.screen)
             self.assertFalse(held.changed)
-            self.assertIsNone(held.completed_action)
 
-        for refreshed_nodes, hub_online in ((nodes, True), ((), True), (nodes, False), ((), False)):
-            refreshed = reduce_ui(
-                system,
-                DataRefreshed(refreshed_nodes, hub_online, 13),
-                context(refreshed_nodes),
+    def test_phase_8_hold_progress_completion_release_and_movement_cancellation(self) -> None:
+        base = UiState(screen=Screen.POWER_CONFIRM, pending_power_action=PowerAction.REBOOT)
+        before = copy.deepcopy(base)
+        self.assertEqual(0.0, power_hold_progress(base, 10, 1.5))
+        started = reduce_ui(base, PowerHoldStarted(10.0), context(hold=1.5))
+        self.assertEqual(before, base)
+        self.assertEqual((10.0, 10.0, True, False), (
+            started.state.confirmation_started_at,
+            started.state.last_interaction_at,
+            started.changed,
+            started.full_refresh,
+        ))
+        for now, expected in ((10.0, 0.0), (10.375, 0.25), (10.75, 0.5), (11.125, 0.75)):
+            self.assertEqual(expected, power_hold_progress(started.state, now, 1.5))
+            tick = reduce_ui(started.state, PowerHoldTick(now), context(hold=1.5))
+            self.assertFalse(tick.changed)
+        self.assertLess(power_hold_progress(started.state, 11.49, 1.5), 1.0)
+        completed = reduce_ui(started.state, PowerHoldTick(11.5), context(hold=1.5))
+        self.assertEqual((Screen.POWER_PENDING, PowerAction.REBOOT, None, "power_confirmed"), (
+            completed.state.screen,
+            completed.state.pending_power_action,
+            completed.state.confirmation_started_at,
+            completed.completed_action,
+        ))
+        second_tick = reduce_ui(completed.state, PowerHoldTick(12), context(hold=1.5))
+        self.assertFalse(second_tick.changed)
+        self.assertIsNone(second_tick.completed_action)
+
+        for event, completed_action in (
+            (PowerHoldReleased(10.5), "power_hold_released"),
+            (PowerHoldCancelled(10.5), "power_hold_cancelled"),
+        ):
+            transition = reduce_ui(started.state, event, context(hold=1.5))
+            self.assertEqual((Screen.POWER_CONFIRM, None, completed_action), (
+                transition.state.screen,
+                transition.state.confirmation_started_at,
+                transition.completed_action,
+            ))
+            self.assertEqual(0.0, power_hold_progress(transition.state, 20, 1.5))
+
+        short_hold = reduce_ui(base, ShortPress(200, 210, 1), context())
+        long_hold = reduce_ui(base, LongPress(200, 210, 1), context())
+        self.assertFalse(short_hold.changed)
+        self.assertFalse(long_hold.changed)
+        self.assertIsNone(short_hold.state.confirmation_started_at)
+        missing = UiState(screen=Screen.POWER_CONFIRM)
+        self.assertIsNone(visible_action_at(missing, None, 200, 210, ()))
+        self.assertFalse(reduce_ui(missing, PowerHoldStarted(1), context()).changed)
+        for hold_seconds in (0, -1):
+            self.assertEqual(0.0, power_hold_progress(started.state, 100, hold_seconds))
+            self.assertEqual(
+                Screen.POWER_CONFIRM,
+                reduce_ui(started.state, PowerHoldTick(100), context(hold=hold_seconds)).state.screen,
             )
-            self.assertEqual(Screen.SYSTEM, refreshed.state.screen)
 
-        blocked_rotation = reduce_ui(
-            system,
-            AutoRotateTick(30, True),
-            context(nodes, rotate=1),
-        )
-        self.assertEqual((Screen.SYSTEM, "a"), (
-            blocked_rotation.state.screen, blocked_rotation.state.selected_node_id
+    def test_phase_8_power_screens_refresh_timeout_rotation_and_pending_back(self) -> None:
+        nodes = (node("a"), node("b"))
+        for screen in (Screen.POWER_CONFIRM, Screen.POWER_PENDING):
+            state = UiState(
+                screen=screen,
+                selected_node_id="a",
+                pending_power_action=PowerAction.POWEROFF,
+                confirmation_started_at=1 if screen == Screen.POWER_CONFIRM else None,
+                last_interaction_at=0,
+            )
+            for refreshed_nodes, online in (((), True), ((), False), (nodes, True), (nodes, False)):
+                refreshed = reduce_ui(
+                    state,
+                    DataRefreshed(refreshed_nodes, online, 2),
+                    context(refreshed_nodes),
+                )
+                self.assertEqual(screen, refreshed.state.screen)
+                self.assertEqual(PowerAction.POWEROFF, refreshed.state.pending_power_action)
+            rotated = reduce_ui(state, AutoRotateTick(30, True), context(nodes, rotate=1))
+            self.assertEqual((screen, "a"), (rotated.state.screen, rotated.state.selected_node_id))
+            suppressed = reduce_ui(state, InactivityTick(15, True), context(nodes, menu=15))
+            self.assertEqual(screen, suppressed.state.screen)
+            timed_out = reduce_ui(state, InactivityTick(15, False), context(nodes, menu=15))
+            self.assertEqual((Screen.SYSTEM, None, None, "timeout_system"), (
+                timed_out.state.screen,
+                timed_out.state.pending_power_action,
+                timed_out.state.confirmation_started_at,
+                timed_out.completed_action,
+            ))
+
+        pending = UiState(screen=Screen.POWER_PENDING, pending_power_action=PowerAction.REBOOT)
+        back = reduce_ui(pending, ShortPress(160, 210, 20), context(nodes))
+        self.assertEqual((Screen.SYSTEM, None, "power_pending_back"), (
+            back.state.screen, back.state.pending_power_action, back.completed_action
         ))
-        timed_out = reduce_ui(
-            replace(system, last_interaction_at=0),
-            InactivityTick(15, False),
-            context(nodes, menu=15),
-        )
-        self.assertEqual((Screen.OVERVIEW, "timeout_overview"), (
-            timed_out.state.screen, timed_out.completed_action
-        ))
-        back = reduce_ui(system, ShortPress(160, 210, 14), context(nodes))
-        self.assertEqual((Screen.MAIN_MENU, 1, "system_back"), (
-            back.state.screen, back.state.menu_page, back.completed_action
-        ))
+        self.assertFalse(reduce_ui(pending, PowerHoldReleased(21), context(nodes)).changed)
 
-    def test_phase_7_system_resolver_and_end_to_end_are_local_and_safe(self) -> None:
-        nodes = (node("a"),)
-        state = UiState(screen=Screen.SYSTEM)
-        state_before = copy.deepcopy(state)
-        nodes_before = copy.deepcopy(nodes)
-        for selected, snapshot in ((nodes[0], nodes), (None, ()), (None, None)):
-            self.assertEqual("system_back", visible_action_at(state, selected, 64, 192, snapshot))
-            for point in ((0, 32), (319, 103), (0, 112), (319, 183), (63, 210), (256, 210)):
-                self.assertIsNone(visible_action_at(state, selected, *point, snapshot))
-        self.assertEqual(state_before, state)
-        self.assertEqual(nodes_before, nodes)
-
-        current = UiState(selected_node_id="a")
-        current = reduce_ui(current, LongPress(160, 210, 1), context(nodes)).state
-        current = reduce_ui(current, ShortPress(300, 210, 2), context(nodes)).state
-        opened = reduce_ui(current, ShortPress(240, 152, 3), context(nodes))
-        self.assertEqual(Screen.SYSTEM, opened.state.screen)
-        self.assertEqual(Screen.SYSTEM, reduce_ui(opened.state, ShortPress(20, 50, 4), context(nodes)).state.screen)
-        self.assertEqual(Screen.SYSTEM, reduce_ui(opened.state, ShortPress(20, 130, 5), context(nodes)).state.screen)
-        empty = reduce_ui(opened.state, DataRefreshed((), True, 6), context())
-        self.assertEqual(Screen.SYSTEM, empty.state.screen)
-        back = reduce_ui(empty.state, ShortPress(160, 210, 7), context())
-        self.assertEqual((Screen.MAIN_MENU, 1), (back.state.screen, back.state.menu_page))
-
-    def test_all_events_have_no_effect_and_future_screens_are_unreachable(self) -> None:
+    def test_all_events_have_no_effect_and_power_error_remains_unreachable(self) -> None:
         value = node()
         events = (
             DataRefreshed((value,), True, 1),
@@ -1434,23 +1481,30 @@ class UiStateTests(unittest.TestCase):
             LongPress(10, 10, 3),
             InactivityTick(4, False),
             AutoRotateTick(5, True),
+            PowerHoldStarted(6),
+            PowerHoldTick(7),
+            PowerHoldCancelled(8),
+            PowerHoldReleased(9),
         )
         for event in events:
             transition = reduce_ui(UiState(), event, context((value,)))
             self.assertIs(UiEffect.NONE, transition.effect)
 
-        for screen in (
-            Screen.POWER_CONFIRM,
-            Screen.POWER_PENDING,
+        system = UiState(screen=Screen.SYSTEM)
+        confirmation = reduce_ui(system, ShortPress(20, 50, 10), context((value,)))
+        pending = reduce_ui(
+            reduce_ui(confirmation.state, PowerHoldStarted(11), context((value,), hold=1)).state,
+            PowerHoldTick(12),
+            context((value,), hold=1),
+        )
+        self.assertEqual(Screen.POWER_CONFIRM, confirmation.state.screen)
+        self.assertEqual(Screen.POWER_PENDING, pending.state.screen)
+        error = UiState(screen=Screen.POWER_ERROR)
+        self.assertEqual(
             Screen.POWER_ERROR,
-        ):
-            state = UiState(screen=screen)
-            transition = reduce_ui(state, ShortPress(160, 210, 10), context((value,)))
-            self.assertEqual(screen, transition.state.screen)
-            self.assertIsNone(transition.state.pending_power_action)
-            self.assertIsNone(transition.state.confirmation_started_at)
-            self.assertFalse(transition.changed)
-            self.assertIs(UiEffect.NONE, transition.effect)
+            reduce_ui(error, ShortPress(160, 210, 13), context((value,))).state.screen,
+        )
+        self.assertIs(UiEffect.NONE, pending.effect)
 
 
 if __name__ == "__main__":

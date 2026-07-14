@@ -60,13 +60,18 @@ class TouchRecognizer:
             self.points.clear()
             self.points.append((x, y))
             return None
-        if self.state != GestureState.PRESSED:
+        if self.state not in {
+            GestureState.PRESSED,
+            GestureState.LONG_EMITTED,
+        }:
             return None
 
         self.points.append((x, y))
         current = self.position
         if max(abs(current[0] - self.origin[0]), abs(current[1] - self.origin[1])) > self.movement_tolerance_pixels:
             self.state = GestureState.WAIT_RELEASE
+            return None
+        if self.state == GestureState.LONG_EMITTED:
             return None
         duration = now - self.started_at
         if duration >= self.long_press_seconds:
