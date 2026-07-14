@@ -109,6 +109,7 @@ from display.ui_state import (
     PowerHoldTick,
     PowerRequestAccepted,
     PowerRequestError,
+    PowerRequestFailed,
     PowerRequestStatus,
     ShortPress,
     Screen,
@@ -2536,7 +2537,10 @@ class DisplayTests(unittest.TestCase):
         self.assertNotIn('"/api/v1/power', hub_source)
         self.assertNotIn('"/power', hub_source)
 
-    def test_phase_9_application_shows_pending_frame_before_one_request(self) -> None:
+    def _assert_phase_9_application_full_refreshes_result(
+        self,
+        result: PowerClientResult,
+    ) -> None:
         calls = []
         result_events = []
 
@@ -2579,13 +2583,24 @@ class DisplayTests(unittest.TestCase):
 
         def fake_render(*args, **kwargs):
             state = args[3] if len(args) > 3 else kwargs.get("ui_state")
-            pending = (
+            if (
                 state is not None
                 and state.screen == Screen.POWER_PENDING
                 and state.power_request_status == PowerRequestStatus.SENDING
-            )
-            calls.append(("render", "pending" if pending else "other"))
-            return Image.new("RGB", (320, 240), "white" if pending else "black")
+            ):
+                label, color = "pending", "white"
+            elif (
+                state is not None
+                and state.screen == Screen.POWER_PENDING
+                and state.power_request_status == PowerRequestStatus.ACCEPTED
+            ):
+                label, color = "accepted", "green"
+            elif state is not None and state.screen == Screen.POWER_ERROR:
+                label, color = "error", "red"
+            else:
+                label, color = "other", "black"
+            calls.append(("render", label))
+            return Image.new("RGB", (320, 240), color)
 
         def fake_reduce(state, event, context):
             if isinstance(event, DataRefreshed):
@@ -2610,11 +2625,23 @@ class DisplayTests(unittest.TestCase):
                     changed=True,
                     full_refresh=True,
                 )
+            if isinstance(event, PowerRequestFailed):
+                result_events.append(event)
+                return UiTransition(
+                    replace(
+                        state,
+                        screen=Screen.POWER_ERROR,
+                        power_request_status=None,
+                        power_request_error=event.error,
+                    ),
+                    changed=True,
+                    full_refresh=True,
+                )
             return UiTransition(state)
 
         async def fake_request(socket_path, action):
             calls.append(("request", action))
-            return PowerClientResult(accepted=True)
+            return result
 
         config = {
             "calibration_file": "ignored.json",
@@ -2639,7 +2666,7 @@ class DisplayTests(unittest.TestCase):
             "display.app.Path.read_text", return_value=calibration
         ), patch(
             "display.app.asyncio.sleep",
-            new=AsyncMock(side_effect=StopAsyncIteration),
+            new=AsyncMock(side_effect=(None, StopAsyncIteration)),
         ):
             with self.assertRaises(StopAsyncIteration):
                 asyncio.run(run_display(config))
@@ -2647,10 +2674,27 @@ class DisplayTests(unittest.TestCase):
         pending_render = calls.index(("render", "pending"))
         pending_show = calls.index(("show", (255, 255, 255)))
         request_call = calls.index(("request", PowerAction.REBOOT))
+        result_label = "accepted" if result.accepted else "error"
+        result_color = (0, 128, 0) if result.accepted else (255, 0, 0)
+        result_render = calls.index(("render", result_label))
+        result_show = calls.index(("show", result_color))
         self.assertLess(pending_render, pending_show)
         self.assertLess(pending_show, request_call)
+        self.assertLess(request_call, result_render)
+        self.assertLess(result_render, result_show)
+        self.assertNotIn(("show_region", result_color), calls)
         request.assert_awaited_once()
         self.assertEqual(1, len(result_events))
+
+    def test_phase_9_application_full_refreshes_accepted_result(self) -> None:
+        self._assert_phase_9_application_full_refreshes_result(
+            PowerClientResult(accepted=True)
+        )
+
+    def test_phase_9_application_full_refreshes_failed_result(self) -> None:
+        self._assert_phase_9_application_full_refreshes_result(
+            PowerClientResult(False, PowerRequestError.TIMEOUT)
+        )
 
     def test_phase_9_application_does_not_request_when_pending_show_fails(self) -> None:
         class FailingLcd:

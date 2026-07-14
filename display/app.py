@@ -102,6 +102,7 @@ async def run(config: dict) -> None:
     menu_timeout = max(0.0, float(config.get("menu_timeout_seconds", 15)))
     signature = ""
     queued_power_effect: tuple[UiEffect, PowerAction] | None = None
+    force_full_refresh_next_iteration = False
     lcd.initialize()
     last_frame = render(
         None,
@@ -114,8 +115,9 @@ async def run(config: dict) -> None:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
                 now = loop.time()
-                changed = False
-                full_refresh = False
+                changed = force_full_refresh_next_iteration
+                full_refresh = force_full_refresh_next_iteration
+                force_full_refresh_next_iteration = False
                 completed_action: str | None = None
                 power_frame_presented = False
 
@@ -422,8 +424,14 @@ async def run(config: dict) -> None:
                                 result.error,
                                 result_now,
                             )
-                        apply_transition(
-                            reduce_ui(state, result_event, context)
+                        result_transition = reduce_ui(
+                            state,
+                            result_event,
+                            context,
+                        )
+                        apply_transition(result_transition)
+                        force_full_refresh_next_iteration |= (
+                            result_transition.full_refresh
                         )
                     finally:
                         queued_power_effect = None

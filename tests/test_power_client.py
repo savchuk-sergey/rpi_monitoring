@@ -14,9 +14,10 @@ from display.ui_state import PowerAction, PowerRequestError
 
 
 class PowerClientTests(unittest.IsolatedAsyncioTestCase):
-    def _stream(self, response=b"accepted\n"):
+    def _stream(self, response=b"accepted\n", trailing=b""):
         reader = Mock()
         reader.readline = AsyncMock(return_value=response)
+        reader.read = AsyncMock(return_value=trailing)
         writer = Mock()
         writer.drain = AsyncMock()
         writer.wait_closed = AsyncMock()
@@ -83,6 +84,10 @@ class PowerClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_exact_accepted_response_succeeds(self) -> None:
         responses = (
             (b"accepted\n", True),
+            (b"accepted\nextra", False),
+            (b"accepted\n\n", False),
+            (b"accepted\nrejected", False),
+            (b"accepted\n\x00", False),
             (b"", False),
             (b"accepted", False),
             (b"ACCEPTED\n", False),
@@ -90,9 +95,11 @@ class PowerClientTests(unittest.IsolatedAsyncioTestCase):
             (b"accepted \n", False),
             (b"ok\n", False),
         )
-        for response, accepted in responses:
-            reader, writer = self._stream(response)
-            with self.subTest(response=response), patch(
+        for raw_response, accepted in responses:
+            line, separator, trailing = raw_response.partition(b"\n")
+            response = line + separator
+            reader, writer = self._stream(response, trailing[:1])
+            with self.subTest(response=raw_response), patch(
                 "display.power_client.asyncio.open_unix_connection",
                 new=AsyncMock(return_value=(reader, writer)),
                 create=True,
@@ -105,6 +112,29 @@ class PowerClientTests(unittest.IsolatedAsyncioTestCase):
             )
             writer.close.assert_called_once()
             writer.wait_closed.assert_awaited_once()
+
+    async def test_accepted_without_eof_times_out_and_closes_writer(self) -> None:
+        reader, writer = self._stream()
+
+        async def wait_for_eof(size):
+            await asyncio.sleep(1)
+
+        reader.read.side_effect = wait_for_eof
+        connect = AsyncMock(return_value=(reader, writer))
+        with patch(
+            "display.power_client.asyncio.open_unix_connection",
+            new=connect,
+            create=True,
+        ):
+            result = await request_power_action(
+                DEFAULT_POWER_SOCKET,
+                PowerAction.REBOOT,
+                timeout_seconds=0.001,
+            )
+        self.assertEqual(PowerRequestError.TIMEOUT, result.error)
+        connect.assert_awaited_once()
+        writer.close.assert_called_once()
+        writer.wait_closed.assert_awaited_once()
 
     async def test_oversized_response_is_protocol_error_and_writer_closes(self) -> None:
         reader, writer = self._stream()

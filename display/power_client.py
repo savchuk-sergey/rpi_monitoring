@@ -69,12 +69,12 @@ async def request_power_action(
                         accepted=False,
                         error=PowerRequestError.PROTOCOL_ERROR,
                     )
-                if response == b"accepted\n":
-                    return PowerClientResult(accepted=True)
-                return PowerClientResult(
-                    accepted=False,
-                    error=PowerRequestError.PROTOCOL_ERROR,
-                )
+                if response != b"accepted\n" or await reader.read(1) != b"":
+                    return PowerClientResult(
+                        accepted=False,
+                        error=PowerRequestError.PROTOCOL_ERROR,
+                    )
+                return PowerClientResult(accepted=True)
             finally:
                 if writer is not None:
                     writer.close()
