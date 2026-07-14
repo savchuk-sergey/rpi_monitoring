@@ -82,26 +82,80 @@ class LinuxCollector:
             "storage": storage,
             "network": network,
             "health": health,
-            "collector": {"version": "0.2.0", "errors": errors},
+            "collector": {"version": "0.3.0", "errors": errors},
         }
         if self.is_raspberry_pi():
             sample["device"] = {
                 "power_w": self._safe("device power", self.device_power, errors)
             }
+        sample["capabilities"] = self.capabilities(sample)
         return sample
 
-    def capabilities(self) -> dict:
+    def capabilities(self, sample: dict) -> dict:
+        def item(supported: bool, source: str, reason: str = "sensor_not_found") -> dict:
+            return {
+                "supported": supported,
+                "source": source if supported else None,
+                "reason": None if supported else reason,
+            }
+
+        cpu = sample["cpu"]
+        memory = sample["memory"]
+        gpu_supported = bool(sample["gpu"]) or shutil.which("nvidia-smi") is not None
+        storage = sample["storage"]
+        network_supported = self._path("/proc/net/dev").is_file()
+        pi_health = self.is_raspberry_pi() and (
+            shutil.which("vcgencmd") is not None or self.runner is not run_command
+        )
+        device_power = sample.get("device", {}).get("power_w") is not None
+        disk_rates = self._root_disk_counters() is not None
+
         return {
-            "cpu_usage": self._path("/proc/stat").is_file(),
-            "memory_usage": self._path("/proc/meminfo").is_file(),
-            "cpu_temperature": self.cpu_temperature() is not None,
-            "cpu_power": bool(self._rapl_energy_paths()),
-            "cpu_clock": self.cpu_clock() is not None,
-            "memory_pressure": self.memory_pressure() is not None,
-            "device_power": self.is_raspberry_pi() and self.device_power() is not None,
-            "nvidia_gpu": shutil.which("nvidia-smi") is not None,
-            "storage": True,
-            "network": self._path("/proc/net/dev").is_file(),
+            "cpu.usage_percent": item(self._path("/proc/stat").is_file(), "procfs"),
+            "cpu.temperature_c": item(cpu["temperature_c"] is not None, "hwmon"),
+            "cpu.power_w": item(bool(self._rapl_energy_paths()), "rapl"),
+            "cpu.clock_mhz": item(
+                cpu["clock_mhz"] is not None, "cpufreq", "metric_unavailable"
+            ),
+            "memory.usage_percent": item(
+                self._path("/proc/meminfo").is_file(), "procfs"
+            ),
+            "memory.swap_usage_percent": item(
+                self._path("/proc/meminfo").is_file(), "procfs"
+            ),
+            "memory.pressure_some_percent": item(
+                self._path("/proc/pressure/memory").is_file(),
+                "psi",
+                "unsupported_kernel",
+            ),
+            "gpu.usage_percent": item(gpu_supported, "nvidia-smi"),
+            "gpu.temperature_c": item(gpu_supported, "nvidia-smi"),
+            "gpu.memory_usage_percent": item(gpu_supported, "nvidia-smi"),
+            "gpu.power_w": item(gpu_supported, "nvidia-smi"),
+            "storage.usage_percent": item(True, "statvfs"),
+            "storage.read_bytes_per_second": item(
+                disk_rates, "procfs", "device_not_resolved"
+            ),
+            "storage.write_bytes_per_second": item(
+                disk_rates, "procfs", "device_not_resolved"
+            ),
+            "storage.temperature_c": item(False, "hwmon"),
+            "network.down_bytes_per_second": item(
+                network_supported, "procfs", "interface_not_found"
+            ),
+            "network.up_bytes_per_second": item(
+                network_supported, "procfs", "interface_not_found"
+            ),
+            "health.uptime_seconds": item(
+                self._path("/proc/uptime").is_file(), "procfs"
+            ),
+            "health.undervoltage": item(
+                pi_health, "vcgencmd", "unsupported_platform"
+            ),
+            "health.throttled": item(
+                pi_health, "vcgencmd", "unsupported_platform"
+            ),
+            "device.power_w": item(device_power, "ina2xx"),
         }
 
     def cpu_usage(self) -> float | None:

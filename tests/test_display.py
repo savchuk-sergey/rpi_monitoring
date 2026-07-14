@@ -126,6 +126,7 @@ class DisplayTests(unittest.TestCase):
     def test_status_priority_and_freshness(self) -> None:
         degraded = node(collector={"version": "0.1.0", "errors": ["a", "b"]})
         self.assertEqual("LINK LOST", _status(degraded, False)[0])
+        self.assertEqual("WAITING", _status(node(online=False, waiting=True), True)[0])
         self.assertEqual("OFFLINE", _status(node(online=False), True)[0])
         self.assertEqual("DEGRADED ERR 2", _status(degraded, True)[0])
         self.assertEqual("ONLINE", _status(node(), True)[0])
@@ -194,6 +195,10 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual("network", category_at(160, 120).id)
         self.assertTrue(category("cpu").available(value))
         self.assertFalse(category("storage").available(value))
+        capability = {"supported": True, "source": "statvfs", "reason": None}
+        self.assertTrue(category("storage").available(node(capabilities={"storage.usage_percent": capability})))
+        unsupported = {"supported": False, "source": None, "reason": "sensor_not_found"}
+        self.assertFalse(category("gpu").available(node(gpu=[{}], capabilities={"gpu.usage_percent": unsupported})))
         self.assertEqual(100.0, category("cpu").metrics[0].maximum)
         self.assertEqual("temperature", metric_at("cpu", 150, 50).id)
         self.assertEqual("values", detail_view_at(80, 68))

@@ -1,12 +1,14 @@
 import copy
 import hashlib
 import json
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from aiohttp.test_utils import AioHTTPTestCase
 
-from hub.app import HubState, create_local_app, create_public_app
+from hub.app import HubState, create_local_app, create_public_app, load_config
 
 
 TOKEN = "a" * 43
@@ -29,6 +31,71 @@ def sample(node_id: str = "desktop", age: timedelta = timedelta()) -> dict:
         "gpu": [],
         "collector": {"version": "0.1.0", "errors": []},
     }
+
+
+
+class HubStatePersistenceTests(unittest.TestCase):
+    def test_registry_waits_and_last_sample_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "state.sqlite3"
+            hashes = {
+                "desktop": hashlib.sha256(TOKEN.encode()).hexdigest(),
+                "waiting": hashlib.sha256(("b" * 43).encode()).hexdigest(),
+            }
+            state = HubState(hashes, database_path=database)
+            nodes = {node["node_id"]: node for node in state.current()["nodes"]}
+            self.assertTrue(nodes["desktop"]["waiting"])
+            self.assertTrue(nodes["waiting"]["waiting"])
+
+            first = sample()
+            first["display_name"] = "First"
+            state.accept(first)
+            second = sample()
+            second["display_name"] = "Second"
+            second["timestamp_utc"] = (
+                datetime.fromisoformat(first["timestamp_utc"].replace("Z", "+00:00"))
+                + timedelta(seconds=1)
+            ).isoformat().replace("+00:00", "Z")
+            state.accept(second)
+
+            restored = HubState(hashes, offline_seconds=0, database_path=database)
+            nodes = {node["node_id"]: node for node in restored.current()["nodes"]}
+            self.assertEqual("First", nodes["desktop"]["display_name"])
+            self.assertFalse(nodes["desktop"]["online"])
+            self.assertNotIn("waiting", nodes["desktop"])
+
+    def test_config_hot_reloads_without_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "hub.json"
+            database = root / "state.sqlite3"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "state_database": str(database),
+                        "token_sha256": {
+                            "desktop": hashlib.sha256(TOKEN.encode()).hexdigest()
+                        },
+                    }
+                )
+            )
+            state = load_config(config_path)
+            self.assertTrue(state.authenticate("desktop", TOKEN))
+
+            other_token = "b" * 43
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "state_database": str(database),
+                        "token_sha256": {
+                            "other": hashlib.sha256(other_token.encode()).hexdigest()
+                        },
+                    }
+                )
+            )
+            self.assertTrue(state.authenticate("other", other_token))
+            self.assertFalse(state.authenticate("desktop", TOKEN))
+            self.assertEqual(["other"], [node["node_id"] for node in state.current()["nodes"]])
 
 
 def sample_v2() -> dict:

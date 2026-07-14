@@ -53,5 +53,10 @@
     "undervoltage": null,
     "throttled": null
   },
-  "collector": { "version": "0.2.0", "errors": [] }
+  "capabilities": {
+    "cpu.power_w": { "supported": true, "source": "librehardwaremonitor", "reason": null },
+    "memory.pressure_some_percent": { "supported": false, "source": null, "reason": "unsupported_os" },
+    "gpu.usage_percent": { "supported": true, "source": "librehardwaremonitor", "reason": null }
+  },
+  "collector": { "version": "0.3.0", "errors": [] }
 }

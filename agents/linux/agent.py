@@ -45,7 +45,8 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     if args.capabilities:
-        print(json.dumps(LinuxCollector().capabilities(), indent=2))
+        sample = LinuxCollector().collect("capabilities", "Capabilities")
+        print(json.dumps(sample["capabilities"], indent=2))
         return
     asyncio.run(run(load_config(args.config)))
 

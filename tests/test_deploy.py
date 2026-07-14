@@ -11,6 +11,8 @@ DEPLOY_SCRIPTS = [
     Path(__file__).parents[1] / "scripts" / name
     for name in ("deploy-windows-node.ps1", "deploy-linux-node.ps1")
 ]
+PI_DEPLOY = Path(__file__).parents[1] / "scripts" / "deploy-pi.ps1"
+HUB_UNIT = Path(__file__).parents[1] / "deploy" / "systemd" / "homelab-resource-monitor-hub.service"
 LINUX_UNIT = (
     Path(__file__).parents[1]
     / "deploy"
@@ -27,6 +29,7 @@ class DeploymentHelperTests(unittest.TestCase):
         self.assertIn("ExecStart=/opt/homelab-resource-monitor/.venv/bin/python", installer)
         self.assertIn("WorkingDirectory=/opt/homelab-resource-monitor'", installer)
         self.assertIn("usermod -a -G video homelab-monitor-agent", installer)
+        self.assertIn("StateDirectory=homelab-resource-monitor", HUB_UNIT.read_text())
 
     def test_registration_rejects_unsafe_arguments_before_accessing_hub_config(self):
         for node_id, token_hash in (("INVALID NODE", "0" * 64), ("server01", "not-a-hash")):
@@ -44,8 +47,13 @@ class DeploymentHelperTests(unittest.TestCase):
     def test_node_deploy_verification_avoids_nested_shell_quoting(self):
         for path in DEPLOY_SCRIPTS:
             script = path.read_text()
+            self.assertNotIn("systemctl restart homelab-resource-monitor-hub.service", script)
             self.assertIn("ConvertFrom-Json", script)
             self.assertNotIn("json.load(sys.stdin)", script)
+
+    def test_pi_deploy_normalizes_windows_line_endings(self):
+        script = PI_DEPLOY.read_text()
+        self.assertIn("sed -i 's/\\r`$//'", script)
 
 
 if __name__ == "__main__":

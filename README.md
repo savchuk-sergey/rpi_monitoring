@@ -34,10 +34,21 @@ connected. LCD and touch chip-select lines must remain separate.
 
 ## Telemetry contract
 
-`protocol/telemetry-v1.schema.json` is the Draft 2020-12 authority. Optional
-measurements are JSON `null`; a missing GPU is `[]`. Percentages are 0..100.
+`protocol/telemetry-v1.schema.json` and `protocol/telemetry-v2.schema.json` are
+the backward-compatible Draft 2020-12 authorities. Optional measurements are
+JSON `null`; a missing GPU is `[]`. Percentages are 0..100.
 `NaN` and infinities are rejected before schema validation. Timestamps must be
 parseable UTC values ending in `Z`.
+
+Telemetry v2 may include a `capabilities` map keyed by metric path. Each entry
+states whether the metric is supported, its source, or an explicit unavailable
+reason. The display uses it to hide unsupported categories while retaining the
+value-based fallback for older samples.
+
+The hub treats `token_sha256` as the node registry, reloads it after atomic
+config updates, and keeps one last-known sample per node in SQLite. Registered
+nodes without a sample are exposed as `WAITING`. Persistence is limited to one
+write per node every 30 seconds and one day of last-known state by default.
 
 Run the current unit tests:
 
@@ -97,7 +108,7 @@ Full removal is deliberately explicit because it deletes calibration and hub
 tokens:
 
 ```powershell
-ssh deploy@192.168.31.94 "sudo systemctl disable --now homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service; sudo rm -f /etc/systemd/system/homelab-resource-monitor-hub.service /etc/systemd/system/homelab-resource-monitor-display.service /etc/systemd/system/homelab-resource-monitor-linux-agent.service; sudo systemctl daemon-reload; sudo rm -rf /opt/homelab-resource-monitor /etc/homelab-resource-monitor"
+ssh deploy@192.168.31.94 "sudo systemctl disable --now homelab-resource-monitor-hub.service homelab-resource-monitor-display.service homelab-resource-monitor-linux-agent.service; sudo rm -f /etc/systemd/system/homelab-resource-monitor-hub.service /etc/systemd/system/homelab-resource-monitor-display.service /etc/systemd/system/homelab-resource-monitor-linux-agent.service; sudo systemctl daemon-reload; sudo rm -rf /opt/homelab-resource-monitor /etc/homelab-resource-monitor /var/lib/homelab-resource-monitor"
 ```
 
 ### Linux agent over SSH
@@ -179,7 +190,7 @@ Do not work around SSH errors by disabling host-key checking.
 
 ## Current gate
 
-Stage 0 passed after a clean reboot: SSH host-key continuity, Pi identity, SPI,
-`throttled=0x0`, temperature, NTP, disk/memory, and systemd failed units were
-checked. Runtime LCD, touch, agents, reboot recovery, and soak gates remain
-NOT RUN.
+Stage 0 service restart, reboot recovery, network return, SSH host-key
+continuity, SPI, `throttled=0x0`, and live Linux/Windows agent gates passed on
+2026-07-12. Visible LCD/touch confirmation and the 24-72 hour soak remain NOT
+RUN.

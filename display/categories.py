@@ -103,33 +103,43 @@ def draw_health(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill:
 
 
 PERCENT = (0.0, 100.0)
+
+
+def _available(node: dict[str, Any], prefix: str, fallback: bool) -> bool:
+    capabilities = node.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return fallback
+    matches = [value for key, value in capabilities.items() if key.startswith(prefix)]
+    return fallback if not matches else any(value.get("supported") is True for value in matches)
+
+
 CATEGORIES = (
-    Category("cpu", "CPU", draw_cpu, lambda node: bool(node.get("cpu")), (
+    Category("cpu", "CPU", draw_cpu, lambda node: _available(node, "cpu.", bool(node.get("cpu"))), (
         Metric("load", "LOAD", "%", *PERCENT, _nested("cpu", "usage_percent")),
         Metric("temperature", "TEMP", "C", 20.0, 100.0, _nested("cpu", "temperature_c")),
         Metric("clock", "CLOCK", "MHz", 0.0, None, _nested("cpu", "clock_mhz")),
         Metric("power", "PWR", "W", 0.0, None, _nested("cpu", "power_w")),
     )),
-    Category("memory", "MEMORY", draw_memory, lambda node: bool(node.get("memory")), (
+    Category("memory", "MEMORY", draw_memory, lambda node: _available(node, "memory.", bool(node.get("memory"))), (
         Metric("ram", "RAM", "%", *PERCENT, _nested("memory", "usage_percent")),
         Metric("swap", "SWAP", "%", *PERCENT, _nested("memory", "swap_usage_percent")),
         Metric("psi", "PSI", "%", *PERCENT, _nested("memory", "pressure_some_percent")),
     )),
-    Category("gpu", "GRAPHICS", draw_gpu, lambda node: bool(node.get("gpu")), (
+    Category("gpu", "GRAPHICS", draw_gpu, lambda node: _available(node, "gpu.", bool(node.get("gpu"))), (
         Metric("load", "LOAD", "%", *PERCENT, _gpu("usage_percent")),
         Metric("temperature", "TEMP", "C", 20.0, 100.0, _gpu("temperature_c")),
         Metric("vram", "VRAM", "%", *PERCENT, _gpu("memory_usage_percent")),
         Metric("power", "PWR", "W", 0.0, None, _gpu("power_w")),
     )),
     Category("storage", "STORAGE", draw_storage,
-             lambda node: node.get("storage", {}).get("usage_percent") is not None, (
+             lambda node: _available(node, "storage.", node.get("storage", {}).get("usage_percent") is not None), (
         Metric("used", "USED", "%", *PERCENT, _nested("storage", "usage_percent")),
         Metric("read", "READ", "B/s", 0.0, None, _nested("storage", "read_bytes_per_second")),
         Metric("write", "WRITE", "B/s", 0.0, None, _nested("storage", "write_bytes_per_second")),
         Metric("temperature", "TEMP", "C", 20.0, 100.0, _nested("storage", "temperature_c")),
     )),
     Category("network", "NETWORK", draw_network,
-             lambda node: bool(node.get("network", {}).get("interface")), (
+             lambda node: _available(node, "network.", bool(node.get("network", {}).get("interface"))), (
         Metric("down", "DOWN", "B/s", 0.0, None, _nested("network", "down_bytes_per_second")),
         Metric("up", "UP", "B/s", 0.0, None, _nested("network", "up_bytes_per_second")),
     )),
