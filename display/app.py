@@ -9,18 +9,19 @@ from PIL import ImageChops
 
 from display.drivers.ili9341 import ILI9341
 from display.drivers.xpt2046 import XPT2046
-from display.categories import category, category_at, detail_view_at, metric_at
 from display.gestures import GestureKind, GestureState, TouchRecognizer
 from display.history import HistoryStore
-from display.navigation import (
-    DetailView,
+from display.navigation import map_touch, selected_index, touch_action
+from display.ui_state import (
+    AutoRotateTick,
+    DataRefreshed,
+    InactivityTick,
+    LongPress,
+    ShortPress,
+    UiContext,
+    UiEffect,
     UiState,
-    ViewMode,
-    map_touch,
-    move,
-    selected_index,
-    should_return_to_overview,
-    touch_action,
+    reduce_ui,
 )
 from display.renderer import render
 
@@ -42,8 +43,12 @@ async def run(config: dict) -> None:
         int(config.get("history_window_seconds", 300)),
         int(config.get("history_max_samples", 180)),
     )
-    state = UiState()
-    index = 0
+    loop = asyncio.get_running_loop()
+    initial_now = loop.time()
+    state = UiState(
+        last_interaction_at=initial_now,
+        last_rotation_at=initial_now,
+    )
     nodes: list[dict] = []
     hub_online = True
     pressed_action: str | None = None
@@ -53,16 +58,12 @@ async def run(config: dict) -> None:
     pause_after_touch = max(0.0, float(config.get("pause_after_touch_seconds", 30)))
     detail_timeout = max(0.0, float(config.get("detail_timeout_seconds", 45)))
     menu_timeout = max(0.0, float(config.get("menu_timeout_seconds", 15)))
-    pause_until = 0.0
     signature = ""
     lcd.initialize()
     last_frame = render(None)
     lcd.show(last_frame)
     timeout = aiohttp.ClientTimeout(total=2)
-    loop = asyncio.get_running_loop()
     next_refresh = 0.0
-    last_rotation = loop.time()
-    state.last_interaction_at = last_rotation
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
@@ -80,18 +81,33 @@ async def run(config: dict) -> None:
                                 history.add(value)
                     except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError):
                         hub_online = False
-                    index = selected_index(nodes, state.selected_node_id, index)
-                    state.selected_node_id = nodes[index]["node_id"] if nodes else None
-                    if nodes and state.mode == ViewMode.DETAIL:
-                        selected = state.selected_category_id
-                        if selected and (
-                            category(selected).id != selected
-                            or not category(selected).available(nodes[index])
-                        ):
-                            state.mode = ViewMode.OVERVIEW
-                            full_refresh = True
+                    context = UiContext(
+                        tuple(nodes),
+                        pause_after_touch,
+                        detail_timeout,
+                        menu_timeout,
+                        auto_rotate,
+                    )
+                    transition = reduce_ui(
+                        state,
+                        DataRefreshed(tuple(nodes), hub_online, now),
+                        context,
+                    )
+                    state = transition.state
+                    changed |= transition.changed
+                    full_refresh |= transition.full_refresh
+                    if transition.completed_action is not None:
+                        completed_action = transition.completed_action
+                    assert transition.effect is UiEffect.NONE
                     next_refresh = now + 0.5
 
+                context = UiContext(
+                    tuple(nodes),
+                    pause_after_touch,
+                    detail_timeout,
+                    menu_timeout,
+                    auto_rotate,
+                )
                 gesture = None
                 if touch.pressed:
                     raw = touch.read(3)
@@ -102,7 +118,7 @@ async def run(config: dict) -> None:
                         touch_started = now
                         pressed_action = touch_action(x, y)
                         feedback_pending = pressed_action is not None
-                        changed = feedback_pending
+                        changed |= feedback_pending
                     elif recognizer.state == GestureState.WAIT_RELEASE and pressed_action:
                         pressed_action = None
                         feedback_pending = False
@@ -114,96 +130,57 @@ async def run(config: dict) -> None:
                         changed = True
 
                 if gesture:
-                    state.last_interaction_at = now
-                    pause_until = now + pause_after_touch
-                    footer_action = touch_action(gesture.x, gesture.y)
-                    if gesture.kind == GestureKind.LONG:
-                        if state.mode != ViewMode.MENU and footer_action == "center":
-                            state.mode = ViewMode.MENU
-                            completed_action = "long_menu"
-                            full_refresh = True
-                    elif footer_action in ("previous", "next") and len(nodes) > 1:
-                        index = move(index, len(nodes), -1 if footer_action == "previous" else 1)
-                        state.selected_node_id = nodes[index]["node_id"]
-                        state.selected_gpu_index = 0
-                        last_rotation = now
-                        completed_action = footer_action
-                        full_refresh = True
-                    elif footer_action == "center":
-                        if state.mode == ViewMode.OVERVIEW and nodes:
-                            state.category_id(nodes[index])
-                            state.metric_id(nodes[index])
-                            state.detail_view = DetailView.VALUES
-                            state.mode = ViewMode.DETAIL
-                            completed_action = "short_center"
-                            full_refresh = True
-                        elif state.mode == ViewMode.DETAIL:
-                            state.mode = ViewMode.OVERVIEW
-                            completed_action = "short_center"
-                            full_refresh = True
-                    elif state.mode == ViewMode.MENU and nodes:
-                        selected_category = category_at(gesture.x, gesture.y)
-                        if selected_category and selected_category.available(nodes[index]):
-                            state.select_category(nodes[index], selected_category.id)
-                            state.detail_view = DetailView.VALUES
-                            state.mode = ViewMode.DETAIL
-                            completed_action = f"category_{selected_category.id}"
-                            full_refresh = True
-                    elif state.mode == ViewMode.DETAIL and nodes:
-                        selected_view = detail_view_at(gesture.x, gesture.y)
-                        if selected_view:
-                            state.detail_view = DetailView(selected_view)
-                            completed_action = f"view_{selected_view}"
-                            full_refresh = True
-                        else:
-                            selected_metric = metric_at(
-                                state.category_id(nodes[index]),
-                                gesture.x,
-                                gesture.y,
-                            )
-                            if selected_metric:
-                                state.metric_by_category[state.category_id(nodes[index])] = selected_metric.id
-                                completed_action = f"metric_{selected_metric.id}"
-                    changed = changed or completed_action is not None
+                    event = (
+                        LongPress(gesture.x, gesture.y, now)
+                        if gesture.kind == GestureKind.LONG
+                        else ShortPress(gesture.x, gesture.y, now)
+                    )
+                    transition = reduce_ui(state, event, context)
+                    state = transition.state
+                    changed |= transition.changed
+                    full_refresh |= transition.full_refresh
+                    if transition.completed_action is not None:
+                        completed_action = transition.completed_action
+                    assert transition.effect is UiEffect.NONE
 
-                if should_return_to_overview(
+                transition = reduce_ui(
                     state,
-                    now,
-                    detail_timeout,
-                    menu_timeout,
-                    touch.pressed,
-                ):
-                    state.mode = ViewMode.OVERVIEW
-                    completed_action = "timeout_overview"
-                    changed = True
-                    full_refresh = True
+                    InactivityTick(now, touch.pressed),
+                    context,
+                )
+                state = transition.state
+                changed |= transition.changed
+                full_refresh |= transition.full_refresh
+                if transition.completed_action is not None:
+                    completed_action = transition.completed_action
+                assert transition.effect is UiEffect.NONE
 
                 if gesture and completed_action is None:
                     touch_started = None
 
-                if (
-                    auto_rotate
-                    and len(nodes) > 1
-                    and now >= pause_until
-                    and now - last_rotation >= auto_rotate
-                    and recognizer.state == GestureState.IDLE
-                ):
-                    index = move(index, len(nodes), 1)
-                    state.selected_node_id = nodes[index]["node_id"]
-                    state.selected_gpu_index = 0
-                    last_rotation = now
-                    changed = True
-                    full_refresh = True
+                transition = reduce_ui(
+                    state,
+                    AutoRotateTick(
+                        now,
+                        recognizer.state == GestureState.IDLE,
+                    ),
+                    context,
+                )
+                state = transition.state
+                changed |= transition.changed
+                full_refresh |= transition.full_refresh
+                if transition.completed_action is not None:
+                    completed_action = transition.completed_action
+                assert transition.effect is UiEffect.NONE
 
                 state_signature = json.dumps(
                     (
                         hub_online,
                         nodes,
-                        state.mode.value,
+                        state.screen.value,
                         state.selected_node_id,
                         state.selected_category_id,
                         state.metric_by_category,
-                        state.detail_view.value,
                         state.selected_gpu_index,
                         pressed_action,
                         int(now),
@@ -212,6 +189,11 @@ async def run(config: dict) -> None:
                     separators=(",", ":"),
                 )
                 if changed or state_signature != signature:
+                    index = selected_index(
+                        nodes,
+                        state.selected_node_id,
+                        state.node_index_hint,
+                    )
                     render_started = loop.time()
                     frame = render(
                         nodes[index] if nodes else None,
