@@ -138,6 +138,7 @@ class PowerDeploymentTests(unittest.TestCase):
         self.assertLess(dry_run, first_copy)
         self.assertIn("BatchMode=yes", self.deploy_script)
         self.assertIn("StrictHostKeyChecking=yes", self.deploy_script)
+        self.assertIn("/usr/sbin", self.deploy_script)
         for command in ("python3", "systemctl", "systemd-analyze", "runuser", "curl", "sed"):
             self.assertIn(f"command -v {command}", self.deploy_script)
         self.assertIn("/dev/spidev0.0", self.deploy_script)

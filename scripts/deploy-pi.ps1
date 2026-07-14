@@ -17,7 +17,7 @@ $powerActionsEnabled = if ($EnablePowerActions) { 'true' } else { 'false' }
 $powerActionsLabel = if ($EnablePowerActions) { 'enabled' } else { 'disabled' }
 
 if (-not (Test-Path -LiteralPath $CalibrationFile -PathType Leaf)) { throw 'Calibration file not found.' }
-& ssh @ssh $target "hostname >/dev/null && test -e /dev/spidev0.0 && test -e /dev/spidev0.1 && command -v python3 >/dev/null && command -v systemctl >/dev/null && command -v systemd-analyze >/dev/null && command -v runuser >/dev/null && command -v curl >/dev/null && command -v sed >/dev/null && vcgencmd get_throttled && $privilegeCheck && $venvCheck"
+& ssh @ssh $target "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; hostname >/dev/null && test -e /dev/spidev0.0 && test -e /dev/spidev0.1 && command -v python3 >/dev/null && command -v systemctl >/dev/null && command -v systemd-analyze >/dev/null && command -v runuser >/dev/null && command -v curl >/dev/null && command -v sed >/dev/null && vcgencmd get_throttled && $privilegeCheck && $venvCheck"
 if ($LASTEXITCODE -ne 0) { throw 'Pi preflight failed.' }
 if ($DryRun) { Write-Output "Dry-run preflight passed; no changes made; power actions $powerActionsLabel."; exit 0 }
 
