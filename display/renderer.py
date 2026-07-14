@@ -28,8 +28,15 @@ from display.navigation import (
     MENU_PAGES,
     MENU_PREVIOUS_PAGE_HITBOX,
     MENU_TILE_RECTS,
+    NODES_BACK_HITBOX,
+    NODES_NEXT_PAGE_HITBOX,
+    NODES_PREVIOUS_PAGE_HITBOX,
+    NODES_ROW_RECTS,
     VALUES_GRAPH_BUTTON_RECT,
     normalize_menu_page,
+    normalize_nodes_page,
+    nodes_page_count,
+    nodes_page_items,
 )
 from display.ui_state import Screen, UiState
 
@@ -64,8 +71,14 @@ def render(
     history: HistoryStore | None = None,
     pressed_action: str | None = None,
     now: datetime | None = None,
+    nodes: tuple[dict[str, Any], ...] | None = None,
 ) -> Image.Image:
     state = ui_state or UiState()
+    snapshot = (
+        tuple(nodes)
+        if nodes is not None
+        else ((node,) if node is not None else ())
+    )
     image = Image.new("RGB", SIZE, BACKGROUND)
     draw = ImageDraw.Draw(image)
     fonts = {
@@ -76,6 +89,28 @@ def render(
         "title": _font(22),
         "value": _font(38),
     }
+    if state.screen == Screen.NODES:
+        if snapshot:
+            _nodes(
+                draw,
+                fonts,
+                snapshot,
+                state,
+                hub_online,
+                pressed_action,
+                now,
+            )
+            _nodes_footer(
+                draw,
+                fonts,
+                state.nodes_page,
+                len(snapshot),
+                pressed_action,
+            )
+        else:
+            _empty_state(draw, fonts, hub_online)
+            _footer(draw, fonts, Screen.OVERVIEW, pressed_action)
+        return image
     if node is None:
         _empty_state(draw, fonts, hub_online)
         _footer(draw, fonts, Screen.OVERVIEW, pressed_action)
@@ -84,7 +119,7 @@ def render(
     status, status_color = _status(node, hub_online)
     age = _age(node.get("received_at_utc") or node.get("timestamp_utc"), now)
     if state.screen == Screen.MAIN_MENU:
-        _menu(draw, fonts, node, state, pressed_action)
+        _menu(draw, fonts, node, snapshot, state, pressed_action)
         _menu_footer(draw, fonts, state.menu_page, pressed_action)
         return image
     elif state.screen == Screen.VALUES:
@@ -338,6 +373,7 @@ def _menu(
     draw: ImageDraw.ImageDraw,
     fonts: dict[str, Any],
     node: dict[str, Any],
+    nodes: tuple[dict[str, Any], ...],
     state: UiState,
     pressed_action: str | None,
 ) -> None:
@@ -355,12 +391,23 @@ def _menu(
     for category_id, (left, top, right, bottom) in zip(MENU_PAGES[page], MENU_TILE_RECTS):
         center_x = (left + right) // 2
         icon_box = (center_x - 16, top + 9, center_x + 16, top + 41)
-        if category_id in {"nodes", "system"}:
-            title = category_id.upper()
+        if category_id == "nodes":
+            title = "NODES"
+            available = bool(nodes)
+            color = GREEN if available else MUTED
+            subtitle = (
+                "NO NODES"
+                if not nodes
+                else "1 NODE" if len(nodes) == 1
+                else f"{len(nodes)} NODES"
+            )
+            icon = _draw_nodes_menu_icon
+        elif category_id == "system":
+            title = "SYSTEM"
             color = MUTED
             subtitle = "LATER"
             available = False
-            icon = _draw_nodes_menu_icon if category_id == "nodes" else _draw_system_menu_icon
+            icon = _draw_system_menu_icon
         else:
             item = category(category_id)
             title = item.title
@@ -395,6 +442,144 @@ def _menu(
             subtitle,
             font=fonts["tiny"],
             fill=foreground,
+            anchor="mm",
+        )
+
+
+def _nodes(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    nodes: tuple[dict[str, Any], ...],
+    state: UiState,
+    hub_online: bool,
+    pressed_action: str | None,
+    now: datetime | None,
+) -> None:
+    draw.text((10, 16), "NODES", font=fonts["detail"], fill=GREEN, anchor="lm")
+    count_text = "1 NODE" if len(nodes) == 1 else f"{len(nodes)} NODES"
+    draw.text(
+        (310, 16),
+        count_text,
+        font=fonts["small"],
+        fill=MUTED,
+        anchor="rm",
+    )
+    for index, (node, (left, top, right, bottom)) in enumerate(
+        zip(nodes_page_items(nodes, state.nodes_page), NODES_ROW_RECTS)
+    ):
+        action = f"nodes_select_{index}"
+        pressed = pressed_action == action
+        selected = node.get("node_id") == state.selected_node_id
+        visual_rect = (left + 3, top + 3, right - 4, bottom - 4)
+        if pressed:
+            draw.rectangle(visual_rect, fill=MUTED)
+        elif selected:
+            draw.rectangle(visual_rect, outline=MUTED, width=1)
+
+        status, status_color = _status(node, hub_online)
+        status = _fit(draw, status, fonts["small"], 76)
+        name = _fit(
+            draw,
+            str(node.get("display_name", node["node_id"])).upper(),
+            fonts["detail"],
+            142,
+        )
+        age = _age(
+            node.get("received_at_utc")
+            or node.get("timestamp_utc"),
+            now,
+        )
+        cpu_text = f"CPU {_format_percent(node.get('cpu', {}).get('usage_percent'))}"
+        ram_text = f"RAM {_format_percent(node.get('memory', {}).get('usage_percent'))}"
+        temperature = node.get("cpu", {}).get("temperature_c")
+        gpus = node.get("gpu") or []
+        gpu_usage = gpus[0].get("usage_percent") if gpus else None
+        storage_usage = node.get("storage", {}).get("usage_percent")
+        if temperature is not None:
+            third_text = f"TEMP {_format_temperature(temperature)}"
+        elif gpu_usage is not None:
+            third_text = f"GPU {_format_percent(gpu_usage)}"
+        elif storage_usage is not None:
+            third_text = f"DISK {_format_percent(storage_usage)}"
+        else:
+            third_text = "N/A"
+
+        status_foreground = BACKGROUND if pressed else status_color
+        name_foreground = BACKGROUND if pressed else BRIGHT if selected else GREEN
+        summary_foreground = BACKGROUND if pressed else BRIGHT
+        draw.ellipse(
+            (8, top + 9, 16, top + 17),
+            fill=status_foreground,
+        )
+        draw.text(
+            (22, top + 13),
+            status,
+            font=fonts["small"],
+            fill=status_foreground,
+            anchor="lm",
+        )
+        draw.text(
+            (104, top + 13),
+            name,
+            font=fonts["detail"],
+            fill=name_foreground,
+            anchor="lm",
+        )
+        draw.text(
+            (310, top + 13),
+            age,
+            font=fonts["small"],
+            fill=BACKGROUND if pressed else MUTED,
+            anchor="rm",
+        )
+        for x, text in (
+            (10, cpu_text),
+            (112, ram_text),
+            (220, third_text),
+        ):
+            draw.text(
+                (x, top + 38),
+                text,
+                font=fonts["small"],
+                fill=summary_foreground,
+                anchor="lm",
+            )
+
+    for y in (85, 138, 192):
+        draw.line((0, y, 319, y), fill=MUTED)
+
+
+def _nodes_footer(
+    draw: ImageDraw.ImageDraw,
+    fonts: dict[str, Any],
+    page: int,
+    node_count: int,
+    pressed_action: str | None,
+) -> None:
+    page_count = nodes_page_count(node_count)
+    page = normalize_nodes_page(page, node_count)
+    buttons = (
+        ("nodes_previous_page", NODES_PREVIOUS_PAGE_HITBOX, "<"),
+        ("nodes_back", NODES_BACK_HITBOX, f"BACK {page + 1}/{page_count}"),
+        ("nodes_next_page", NODES_NEXT_PAGE_HITBOX, ">"),
+    )
+    draw.line((0, 192, 319, 192), fill=MUTED)
+    for action, hitbox, label in buttons:
+        box = (hitbox[0], hitbox[1], hitbox[2] - 1, hitbox[3] - 1)
+        actionable = action == "nodes_back" or page_count > 1
+        pressed = actionable and action == pressed_action
+        if pressed:
+            draw.rectangle(box, fill=MUTED)
+        draw.text(
+            ((box[0] + box[2]) // 2, 216),
+            label,
+            font=fonts["small"] if action == "nodes_back" else fonts["label"],
+            fill=(
+                BACKGROUND
+                if pressed
+                else GREEN if actionable
+                else MUTED
+            ),
             anchor="mm",
         )
 

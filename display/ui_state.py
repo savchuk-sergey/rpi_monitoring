@@ -5,11 +5,17 @@ from typing import Any
 from display.categories import can_open_graph, category, default_category
 from display.navigation import (
     MENU_PAGE_COUNT,
+    NODES_PAGE_SIZE,
     graph_action_at,
     menu_action_at,
     menu_page_for_category,
     move,
+    nodes_action_at,
+    nodes_page_count,
+    nodes_page_items,
     normalize_menu_page,
+    normalize_nodes_page,
+    ordered_nodes,
     selected_index,
     touch_action,
     values_action_at,
@@ -139,7 +145,13 @@ def visible_action_at(
     node: dict[str, Any] | None,
     x: int,
     y: int,
+    nodes: tuple[dict[str, Any], ...] | None = None,
 ) -> str | None:
+    snapshot = (
+        tuple(nodes)
+        if nodes is not None
+        else ((node,) if node is not None else ())
+    )
     if (
         state.screen == Screen.GRAPH
         and node is not None
@@ -150,11 +162,20 @@ def visible_action_at(
         action = menu_action_at(state.menu_page, x, y)
         if action in {"menu_previous_page", "menu_back", "menu_next_page"}:
             return action
-        if action in {None, "menu_tile_nodes", "menu_tile_system"}:
+        if action == "menu_tile_nodes":
+            return action if snapshot else None
+        if action is None or action == "menu_tile_system":
             return None
         category_id = action.removeprefix("menu_tile_")
         selected = category(category_id)
         return action if selected.id == category_id and selected.available(node) else None
+    if state.screen == Screen.NODES and snapshot:
+        return nodes_action_at(
+            state.nodes_page,
+            len(snapshot),
+            x,
+            y,
+        )
     footer_action = touch_action(x, y)
     if footer_action is not None:
         return footer_action
@@ -241,6 +262,49 @@ def reduce_ui(
     next_state = replace(state, metric_by_category=dict(state.metric_by_category))
 
     if isinstance(event, DataRefreshed):
+        if state.screen == Screen.NODES:
+            if not event.nodes:
+                next_state.selected_node_id = None
+                next_state.node_index_hint = 0
+                next_state.nodes_page = 0
+                next_state.screen = Screen.OVERVIEW
+                return UiTransition(next_state, changed=True, full_refresh=True)
+
+            ordered = ordered_nodes(event.nodes)
+            ordered_index = next(
+                (
+                    index
+                    for index, item in enumerate(ordered)
+                    if item.get("node_id") == state.selected_node_id
+                ),
+                None,
+            )
+            if ordered_index is None:
+                selected_node = ordered[0]
+                nodes_page = 0
+            else:
+                selected_node = ordered[ordered_index]
+                nodes_page = normalize_nodes_page(state.nodes_page, len(event.nodes))
+            selected_node_id = selected_node.get("node_id")
+            original_index = next(
+                index
+                for index, item in enumerate(event.nodes)
+                if item.get("node_id") == selected_node_id
+            )
+            next_state.selected_node_id = selected_node_id
+            next_state.node_index_hint = original_index
+            next_state.nodes_page = nodes_page
+            changed = (
+                selected_node_id != state.selected_node_id
+                or original_index != state.node_index_hint
+                or nodes_page != state.nodes_page
+            )
+            return UiTransition(
+                next_state,
+                changed=changed,
+                full_refresh=changed,
+            )
+
         index = selected_index(event.nodes, state.selected_node_id, state.node_index_hint)
         if event.nodes:
             next_state.node_index_hint = index
@@ -248,7 +312,7 @@ def reduce_ui(
         else:
             next_state.node_index_hint = 0
             next_state.selected_node_id = None
-            if state.screen in {Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH}:
+            if state.screen in {Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH, Screen.NODES}:
                 next_state.screen = Screen.OVERVIEW
                 return UiTransition(next_state, changed=True, full_refresh=True)
 
@@ -289,7 +353,13 @@ def reduce_ui(
                 state.node_index_hint,
             )
             node = context.nodes[index]
-        action = visible_action_at(state, node, event.x, event.y)
+        action = visible_action_at(
+            state,
+            node,
+            event.x,
+            event.y,
+            nodes=context.nodes,
+        )
 
         if isinstance(event, LongPress):
             if (
@@ -309,6 +379,68 @@ def reduce_ui(
                     completed_action="long_menu",
                 )
             return UiTransition(next_state)
+
+        if state.screen == Screen.NODES and action in {
+            "nodes_previous_page",
+            "nodes_next_page",
+        }:
+            page_count = nodes_page_count(len(context.nodes))
+            if page_count <= 1:
+                return UiTransition(next_state)
+            next_state.nodes_page = move(
+                normalize_nodes_page(state.nodes_page, len(context.nodes)),
+                page_count,
+                -1 if action == "nodes_previous_page" else 1,
+            )
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action=action,
+            )
+
+        if state.screen == Screen.NODES and action == "nodes_back":
+            next_state.screen = Screen.MAIN_MENU
+            next_state.menu_page = 0
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action=action,
+            )
+
+        if (
+            state.screen == Screen.NODES
+            and action in {"nodes_select_0", "nodes_select_1", "nodes_select_2"}
+        ):
+            row_index = int(action.rsplit("_", 1)[1])
+            page_items = nodes_page_items(context.nodes, state.nodes_page)
+            if row_index >= len(page_items):
+                return UiTransition(next_state)
+            selected_node_id = page_items[row_index].get("node_id")
+            original_index = next(
+                (
+                    index
+                    for index, item in enumerate(context.nodes)
+                    if item.get("node_id") == selected_node_id
+                ),
+                None,
+            )
+            if original_index is None:
+                return UiTransition(next_state)
+            next_state = _select_node(
+                next_state,
+                context.nodes,
+                original_index,
+                event.now,
+            )
+            next_state.screen = Screen.OVERVIEW
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action="select_node",
+            )
 
         if state.screen == Screen.MAIN_MENU and action in {
             "menu_previous_page",
@@ -335,10 +467,38 @@ def reduce_ui(
                 completed_action=action,
             )
 
-        if state.screen == Screen.MAIN_MENU and action in {
-            "menu_tile_nodes",
-            "menu_tile_system",
-        }:
+        if state.screen == Screen.MAIN_MENU and action == "menu_tile_nodes":
+            if not context.nodes:
+                return UiTransition(next_state)
+            ordered = ordered_nodes(context.nodes)
+            ordered_index = next(
+                (
+                    index
+                    for index, item in enumerate(ordered)
+                    if item.get("node_id") == state.selected_node_id
+                ),
+                None,
+            )
+            if ordered_index is None:
+                ordered_index = 0
+            selected_node_id = ordered[ordered_index].get("node_id")
+            original_index = next(
+                index
+                for index, item in enumerate(context.nodes)
+                if item.get("node_id") == selected_node_id
+            )
+            next_state.screen = Screen.NODES
+            next_state.selected_node_id = selected_node_id
+            next_state.node_index_hint = original_index
+            next_state.nodes_page = ordered_index // NODES_PAGE_SIZE
+            return UiTransition(
+                next_state,
+                changed=True,
+                full_refresh=True,
+                completed_action="open_nodes",
+            )
+
+        if state.screen == Screen.MAIN_MENU and action == "menu_tile_system":
             return UiTransition(next_state)
 
         if state.screen == Screen.MAIN_MENU and action is not None and action.startswith("menu_tile_"):
@@ -459,7 +619,7 @@ def reduce_ui(
     if isinstance(event, InactivityTick):
         if event.touch_pressed:
             return UiTransition(next_state)
-        if state.screen == Screen.MAIN_MENU:
+        if state.screen in {Screen.MAIN_MENU, Screen.NODES}:
             timeout = context.menu_timeout_seconds
         elif state.screen in {Screen.VALUES, Screen.GRAPH}:
             timeout = context.detail_timeout_seconds

@@ -1,9 +1,11 @@
 import copy
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from display.categories import CATEGORIES, category
+from display.navigation import NODES_PAGE_SIZE, nodes_page_count
 from display.renderer import _status
 from display.ui_state import (
     AutoRotateTick,
@@ -136,8 +138,12 @@ class UiStateTests(unittest.TestCase):
             166,
         ))
         self.assertIsNone(visible_action_at(UiState(screen=Screen.VALUES), None, 160, 166))
-        for screen in (Screen.GRAPH, Screen.OVERVIEW, Screen.MAIN_MENU):
+        for screen in (Screen.GRAPH, Screen.OVERVIEW):
             self.assertIsNone(visible_action_at(UiState(screen=screen), value, 160, 166))
+        self.assertEqual(
+            "menu_tile_nodes",
+            visible_action_at(UiState(screen=Screen.MAIN_MENU), value, 160, 166),
+        )
         graph = UiState(screen=Screen.GRAPH)
         self.assertEqual("graph_previous_metric", visible_action_at(graph, value, 10, 210))
         self.assertEqual("graph_values", visible_action_at(graph, value, 160, 210))
@@ -168,7 +174,7 @@ class UiStateTests(unittest.TestCase):
         )
         expected = {
             0: ((80, 72, "menu_tile_cpu"), (240, 72, "menu_tile_memory"),
-                (80, 152, "menu_tile_gpu"), (240, 152, None)),
+                (80, 152, "menu_tile_gpu"), (240, 152, "menu_tile_nodes")),
             1: ((80, 72, "menu_tile_storage"), (240, 72, "menu_tile_network"),
                 (80, 152, "menu_tile_health"), (240, 152, None)),
         }
@@ -234,7 +240,7 @@ class UiStateTests(unittest.TestCase):
         self.assertEqual((None, 0), (selected.selected_node_id, selected.node_index_hint))
 
     def test_empty_refresh_normalizes_node_dependent_screens_before_input(self) -> None:
-        for screen in (Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH):
+        for screen in (Screen.MAIN_MENU, Screen.VALUES, Screen.GRAPH, Screen.NODES):
             with self.subTest(screen=screen):
                 transition = reduce_ui(
                     UiState(screen=screen, selected_node_id="desktop", node_index_hint=3),
@@ -538,7 +544,7 @@ class UiStateTests(unittest.TestCase):
                 self.assertEqual(page, selected.state.menu_page)
                 self.assertEqual(f"category_{category_id}", selected.completed_action)
 
-        for page, point in ((0, (240, 152)), (1, (240, 152))):
+        for page, point in ((1, (240, 152)),):
             future = reduce_ui(
                 UiState(screen=Screen.MAIN_MENU, selected_node_id="desktop", menu_page=page),
                 ShortPress(*point, 2),
@@ -955,6 +961,7 @@ class UiStateTests(unittest.TestCase):
     def test_timeout_boundaries_touch_suppression_and_zero_disable(self) -> None:
         cases = (
             (Screen.MAIN_MENU, 15.0),
+            (Screen.NODES, 15.0),
             (Screen.VALUES, 45.0),
             (Screen.GRAPH, 45.0),
         )
@@ -1008,6 +1015,313 @@ class UiStateTests(unittest.TestCase):
             self.assertFalse(transition.changed)
             self.assertEqual(blocked_state.selected_node_id, transition.state.selected_node_id)
 
+    def test_phase_6_nodes_resolver_uses_full_snapshot_without_mutation(self) -> None:
+        nodes = (node("node-c"), node("node-a"), node("node-b"), node("node-d"))
+        state = UiState(screen=Screen.MAIN_MENU)
+        state_before = copy.deepcopy(state)
+        nodes_before = copy.deepcopy(nodes)
+        selected_before = copy.deepcopy(nodes[0])
+        self.assertEqual(
+            "menu_tile_nodes",
+            visible_action_at(state, nodes[0], 240, 152, nodes),
+        )
+        self.assertIsNone(visible_action_at(state, nodes[0], 240, 152, ()))
+        system = UiState(screen=Screen.MAIN_MENU, menu_page=1)
+        self.assertIsNone(visible_action_at(system, nodes[0], 240, 152, nodes))
+
+        browser = UiState(screen=Screen.NODES)
+        self.assertEqual(
+            ("nodes_select_0", "nodes_select_1", "nodes_select_2"),
+            tuple(visible_action_at(browser, nodes[0], 10, y, nodes) for y in (40, 90, 150)),
+        )
+        self.assertEqual(
+            ("nodes_previous_page", "nodes_back", "nodes_next_page"),
+            tuple(visible_action_at(browser, nodes[0], x, 210, nodes) for x in (10, 160, 300)),
+        )
+        one = nodes[:1]
+        self.assertEqual(
+            (None, "nodes_back", None),
+            tuple(visible_action_at(browser, one[0], x, 210, one) for x in (10, 160, 300)),
+        )
+        two = nodes[:2]
+        self.assertIsNone(visible_action_at(browser, two[0], 10, 150, two))
+        self.assertEqual(
+            ("previous", "center", "next"),
+            tuple(visible_action_at(browser, None, x, 210, ()) for x in (10, 160, 300)),
+        )
+        self.assertEqual(state_before, state)
+        self.assertEqual(nodes_before, nodes)
+        self.assertEqual(selected_before, nodes[0])
+
+    def test_phase_6_nodes_menu_entry_pagination_and_one_page_defense(self) -> None:
+        nodes = (node("node-c"), node("node-a"), node("node-b"), node("node-d"))
+        preserved = UiState(
+            screen=Screen.MAIN_MENU,
+            selected_node_id="node-d",
+            node_index_hint=3,
+            selected_category_id="health",
+            metric_by_category={"health": "power"},
+            selected_gpu_index=2,
+            menu_page=0,
+        )
+        opened = reduce_ui(preserved, ShortPress(240, 152, 1), context(nodes))
+        self.assertEqual(
+            (Screen.NODES, "node-d", 3, 1, "open_nodes"),
+            (
+                opened.state.screen,
+                opened.state.selected_node_id,
+                opened.state.node_index_hint,
+                opened.state.nodes_page,
+                opened.completed_action,
+            ),
+        )
+        self.assertEqual(("health", {"health": "power"}, 2), (
+            opened.state.selected_category_id,
+            opened.state.metric_by_category,
+            opened.state.selected_gpu_index,
+        ))
+
+        missing = reduce_ui(
+            UiState(screen=Screen.MAIN_MENU, selected_node_id="missing"),
+            ShortPress(240, 152, 2),
+            context(nodes),
+        )
+        self.assertEqual(("node-a", 1, 0), (
+            missing.state.selected_node_id,
+            missing.state.node_index_hint,
+            missing.state.nodes_page,
+        ))
+
+        page_zero = replace(opened.state, nodes_page=0)
+        previous = reduce_ui(page_zero, ShortPress(10, 210, 3), context(nodes))
+        following = reduce_ui(page_zero, ShortPress(300, 210, 4), context(nodes))
+        wrapped = reduce_ui(following.state, ShortPress(300, 210, 5), context(nodes))
+        self.assertEqual((1, "nodes_previous_page"), (
+            previous.state.nodes_page, previous.completed_action
+        ))
+        self.assertEqual((1, "nodes_next_page"), (
+            following.state.nodes_page, following.completed_action
+        ))
+        self.assertEqual((0, "nodes_next_page"), (
+            wrapped.state.nodes_page, wrapped.completed_action
+        ))
+        self.assertEqual("node-d", previous.state.selected_node_id)
+        self.assertEqual("node-d", following.state.selected_node_id)
+
+        for x in (10, 300):
+            defensive = reduce_ui(
+                UiState(screen=Screen.NODES, selected_node_id="node-a"),
+                ShortPress(x, 210, 6),
+                context((nodes[1],)),
+            )
+            self.assertFalse(defensive.changed)
+            self.assertIsNone(defensive.completed_action)
+            self.assertEqual(0, defensive.state.nodes_page)
+
+        back = reduce_ui(page_zero, ShortPress(160, 210, 7), context(nodes))
+        self.assertEqual((Screen.MAIN_MENU, 0, "node-d", "nodes_back"), (
+            back.state.screen,
+            back.state.menu_page,
+            back.state.selected_node_id,
+            back.completed_action,
+        ))
+
+    def test_phase_6_nodes_row_selection_uses_sorted_rows_and_original_index(self) -> None:
+        nodes = (
+            node("node-c"),
+            node("node-a"),
+            node("node-b"),
+            node("node-d"),
+        )
+        for row, expected_id, expected_index, y in (
+            (0, "node-a", 1, 40),
+            (1, "node-b", 2, 90),
+            (2, "node-c", 0, 150),
+        ):
+            with self.subTest(row=row):
+                selected = reduce_ui(
+                    UiState(
+                        screen=Screen.NODES,
+                        selected_node_id="node-d",
+                        selected_gpu_index=2,
+                    ),
+                    ShortPress(10, y, 10 + row),
+                    context(nodes),
+                )
+                self.assertEqual(
+                    (Screen.OVERVIEW, expected_id, expected_index, 0, "select_node", 10 + row),
+                    (
+                        selected.state.screen,
+                        selected.state.selected_node_id,
+                        selected.state.node_index_hint,
+                        selected.state.selected_gpu_index,
+                        selected.completed_action,
+                        selected.state.last_rotation_at,
+                    ),
+                )
+
+        page_two = reduce_ui(
+            UiState(screen=Screen.NODES, selected_node_id="node-a", nodes_page=1),
+            ShortPress(10, 40, 20),
+            context(nodes),
+        )
+        self.assertEqual(("node-d", 3, Screen.OVERVIEW), (
+            page_two.state.selected_node_id,
+            page_two.state.node_index_hint,
+            page_two.state.screen,
+        ))
+        absent = reduce_ui(
+            UiState(screen=Screen.NODES, selected_node_id="node-a", nodes_page=1),
+            ShortPress(10, 90, 21),
+            context(nodes),
+        )
+        self.assertFalse(absent.changed)
+        self.assertIsNone(absent.completed_action)
+        long_row = reduce_ui(
+            UiState(screen=Screen.NODES, selected_node_id="node-a"),
+            LongPress(10, 40, 22),
+            context(nodes),
+        )
+        long_footer = reduce_ui(
+            UiState(screen=Screen.NODES, selected_node_id="node-a"),
+            LongPress(160, 210, 23),
+            context(nodes),
+        )
+        for transition, now in ((long_row, 22), (long_footer, 23)):
+            self.assertFalse(transition.changed)
+            self.assertIsNone(transition.completed_action)
+            self.assertEqual((Screen.NODES, now), (
+                transition.state.screen, transition.state.last_interaction_at
+            ))
+
+    def test_phase_6_nodes_refresh_preserves_identity_clamps_and_keeps_stale_list(self) -> None:
+        nodes = (node("node-c"), node("node-a"), node("node-b"), node("node-d"))
+        reordered = (nodes[3], nodes[2], nodes[0], nodes[1])
+        state = UiState(
+            screen=Screen.NODES,
+            selected_node_id="node-c",
+            node_index_hint=0,
+            nodes_page=1,
+        )
+        refreshed = reduce_ui(state, DataRefreshed(reordered, True, 1), context(reordered))
+        self.assertEqual(("node-c", 2, 1), (
+            refreshed.state.selected_node_id,
+            refreshed.state.node_index_hint,
+            refreshed.state.nodes_page,
+        ))
+        self.assertTrue(refreshed.changed and refreshed.full_refresh)
+
+        status_changed = tuple(
+            node(item["node_id"], online=False) if item["node_id"] == "node-c" else item
+            for item in reordered
+        )
+        stable = reduce_ui(
+            refreshed.state,
+            DataRefreshed(status_changed, True, 2),
+            context(status_changed),
+        )
+        self.assertFalse(stable.changed)
+        self.assertEqual(("node-c", 2, 1), (
+            stable.state.selected_node_id,
+            stable.state.node_index_hint,
+            stable.state.nodes_page,
+        ))
+
+        added = status_changed + (node("node-z"),)
+        with_new = reduce_ui(stable.state, DataRefreshed(added, True, 3), context(added))
+        self.assertEqual(1, with_new.state.nodes_page)
+        self.assertEqual("node-c", with_new.state.selected_node_id)
+
+        shrunk = (node("node-a"), node("node-b"), node("node-c"))
+        clamped = reduce_ui(
+            UiState(screen=Screen.NODES, selected_node_id="node-c", node_index_hint=2, nodes_page=9),
+            DataRefreshed(shrunk, True, 4),
+            context(shrunk),
+        )
+        self.assertEqual(("node-c", 2, 0), (
+            clamped.state.selected_node_id,
+            clamped.state.node_index_hint,
+            clamped.state.nodes_page,
+        ))
+
+        remaining = (node("node-c"), node("node-a"))
+        disappeared = reduce_ui(
+            UiState(screen=Screen.NODES, selected_node_id="node-d", nodes_page=1),
+            DataRefreshed(remaining, True, 5),
+            context(remaining),
+        )
+        self.assertEqual(("node-a", 1, 0), (
+            disappeared.state.selected_node_id,
+            disappeared.state.node_index_hint,
+            disappeared.state.nodes_page,
+        ))
+
+        stale = reduce_ui(
+            state,
+            DataRefreshed(nodes, False, 6),
+            context(nodes),
+        )
+        self.assertEqual((Screen.NODES, "node-c", 0, 1), (
+            stale.state.screen,
+            stale.state.selected_node_id,
+            stale.state.node_index_hint,
+            stale.state.nodes_page,
+        ))
+        self.assertFalse(stale.changed)
+
+        empty = reduce_ui(state, DataRefreshed((), False, 7), context())
+        self.assertEqual((Screen.OVERVIEW, None, 0, 0), (
+            empty.state.screen,
+            empty.state.selected_node_id,
+            empty.state.node_index_hint,
+            empty.state.nodes_page,
+        ))
+        self.assertTrue(empty.changed and empty.full_refresh)
+
+    def test_phase_6_nodes_end_to_end_sequence_and_link_loss(self) -> None:
+        nodes = (node("node-c"), node("node-a"), node("node-b"), node("node-d"))
+        ui_context = context(nodes)
+        state = UiState(selected_node_id="node-b", node_index_hint=2)
+        state = reduce_ui(state, LongPress(160, 210, 1), ui_context).state
+        self.assertEqual((Screen.MAIN_MENU, 0), (state.screen, state.menu_page))
+        opened = reduce_ui(state, ShortPress(240, 152, 2), ui_context)
+        self.assertEqual((Screen.NODES, 0, "open_nodes"), (
+            opened.state.screen, opened.state.nodes_page, opened.completed_action
+        ))
+        following = reduce_ui(opened.state, ShortPress(300, 210, 3), ui_context)
+        self.assertEqual(1, following.state.nodes_page)
+        selected = reduce_ui(following.state, ShortPress(10, 40, 4), ui_context)
+        self.assertEqual((Screen.OVERVIEW, "node-d", "select_node"), (
+            selected.state.screen,
+            selected.state.selected_node_id,
+            selected.completed_action,
+        ))
+        state = reduce_ui(selected.state, LongPress(160, 210, 5), ui_context).state
+        reopened = reduce_ui(state, ShortPress(240, 152, 6), ui_context)
+        self.assertEqual((Screen.NODES, 1, "node-d"), (
+            reopened.state.screen,
+            reopened.state.nodes_page,
+            reopened.state.selected_node_id,
+        ))
+        stale = reduce_ui(
+            reopened.state,
+            DataRefreshed(nodes, False, 7),
+            ui_context,
+        )
+        self.assertEqual((Screen.NODES, 1, "node-d"), (
+            stale.state.screen,
+            stale.state.nodes_page,
+            stale.state.selected_node_id,
+        ))
+        back = reduce_ui(stale.state, ShortPress(160, 210, 8), ui_context)
+        self.assertEqual((Screen.MAIN_MENU, 0, "nodes_back"), (
+            back.state.screen,
+            back.state.menu_page,
+            back.completed_action,
+        ))
+        self.assertEqual(3, NODES_PAGE_SIZE)
+        self.assertEqual(2, nodes_page_count(len(nodes)))
+
     def test_all_events_have_no_effect_and_future_screens_are_unreachable(self) -> None:
         value = node()
         events = (
@@ -1022,7 +1336,6 @@ class UiStateTests(unittest.TestCase):
             self.assertIs(UiEffect.NONE, transition.effect)
 
         for screen in (
-            Screen.NODES,
             Screen.SYSTEM,
             Screen.POWER_CONFIRM,
             Screen.POWER_PENDING,

@@ -123,7 +123,13 @@ async def run(config: dict) -> None:
                             state.node_index_hint,
                         )
                         node = nodes[index] if nodes else None
-                        pressed_action = visible_action_at(state, node, x, y)
+                        pressed_action = visible_action_at(
+                            state,
+                            node,
+                            x,
+                            y,
+                            tuple(nodes),
+                        )
                         feedback_pending = pressed_action is not None
                         changed |= feedback_pending
                     elif recognizer.state == GestureState.WAIT_RELEASE and pressed_action:
@@ -189,6 +195,8 @@ async def run(config: dict) -> None:
                         state.selected_category_id,
                         state.metric_by_category,
                         state.selected_gpu_index,
+                        state.menu_page,
+                        state.nodes_page,
                         pressed_action,
                         int(now),
                     ),
@@ -209,6 +217,7 @@ async def run(config: dict) -> None:
                         state,
                         history,
                         pressed_action,
+                        nodes=tuple(nodes),
                     )
                     render_ms = (loop.time() - render_started) * 1000
                     box = ImageChops.difference(last_frame, frame).getbbox()

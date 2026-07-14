@@ -25,6 +25,11 @@ from display.navigation import (
     MODE_HITBOX,
     NAV_WIDTH,
     NEXT_HITBOX,
+    NODES_BACK_HITBOX,
+    NODES_NEXT_PAGE_HITBOX,
+    NODES_PAGE_SIZE,
+    NODES_PREVIOUS_PAGE_HITBOX,
+    NODES_ROW_RECTS,
     PREVIOUS_HITBOX,
     VALUES_GRAPH_BUTTON_RECT,
     VALUES_GRAPH_HITBOX,
@@ -34,7 +39,12 @@ from display.navigation import (
     menu_page_for_category,
     menu_tile_id_at,
     move,
+    nodes_action_at,
+    nodes_page_count,
+    nodes_page_items,
     normalize_menu_page,
+    normalize_nodes_page,
+    ordered_nodes,
     selected_index,
     touch_action,
     values_action_at,
@@ -67,6 +77,7 @@ from display.renderer import (
     _format_uptime,
     _fit,
     _graph_footer,
+    _nodes_footer,
     _number,
     _status,
     _value,
@@ -128,14 +139,15 @@ OLD_MAIN_MENU_HASHES = {
 }
 
 MENU_RENDER_HASHES = {
-    "menu_page_1_back_pressed": "88fa576a60b8c0a0b17082a51f3014d9af247701c75497a9282111270a799d3d",
-    "menu_page_1_capabilities": "400d71c933ea41af3ddb5a2388309b0e7d9e3b42de8f66ab3db19946c0707a0d",
-    "menu_page_1_cpu_pressed": "926429ff86c7b7a6c67c44911f026097c28c0a56f60f1d832feec1e2faf8565a",
-    "menu_page_1_gpu_pressed": "8477687242d5acf56c1edba147b88213a64940d0eab0986a5d6adbf74a20f5d5",
-    "menu_page_1_legacy": "400d71c933ea41af3ddb5a2388309b0e7d9e3b42de8f66ab3db19946c0707a0d",
-    "menu_page_1_memory_pressed": "6a3aab019040a9171e861c30c93d4d650f5da2924e5e9ae78f09e0dac397c026",
-    "menu_page_1_next_pressed": "b2adc4128ceedd4bd7a7ee7aa3db2c012adb95db3787a03efe2a41f72e1cd29b",
-    "menu_page_1_previous_pressed": "a540cd8cbf600d32e2aff5c8dc4112bc8ce4c24b54159f580baba09a4dcaa98d",
+    "menu_page_1_back_pressed": "0945b1e836db6de7b483a18aac86ad093f10b034b7245ad2941f127e497b354e",
+    "menu_page_1_capabilities": "779e77fb5582e89c474aa6fac739edab98f4006014fea2637cd5b657f4469883",
+    "menu_page_1_cpu_pressed": "d6e2fc5e6dce08dc95d6936bb54a815de21942bc04d8b300d83bc42d63c3472b",
+    "menu_page_1_gpu_pressed": "9ba441a2937ad58db5d7b82d8d968ae73bca17cbe139e83a23a4b1b73841c566",
+    "menu_page_1_legacy": "779e77fb5582e89c474aa6fac739edab98f4006014fea2637cd5b657f4469883",
+    "menu_page_1_memory_pressed": "17df54110f05a439769c6eafebd6b80769d9fd85930097e2f8927c7f6da28bd7",
+    "menu_page_1_next_pressed": "8cf98b2076b6e0a5136c2dd169bb064217102a7e5f23fd744db020e3e7ff1475",
+    "menu_page_1_nodes_pressed": "d4e2b8c0dcf33974026841a75cd9c941980874bc7eaab8c3450e0b5219db2d1d",
+    "menu_page_1_previous_pressed": "4a8a962442e625b33d1988b7f8733e37ef120769319b25a8ed524e9656bca3bc",
     "menu_page_2_back_pressed": "9a49fe8ad02cdd4c3e3e073b924f954d4dc337488318153ddf30566bb1d0c1a8",
     "menu_page_2_capabilities": "504b99df8e1f07a67a43da4b6d9f0fe62cf4895ee56a75260e48ff69c242a2d9",
     "menu_page_2_health_errors": "2bc449356552e31e749105ba9ac67623ef36c2b6ba83adca199680e11a8604a4",
@@ -184,6 +196,21 @@ VALUES_RENDER_HASHES = {
     "cpu_open_graph_pressed": "fe74a79dc01231277ea74759ce8af49e1967a14921832f55f0d3083e419c001f",
 }
 
+NODES_RENDER_HASHES = {
+    "nodes_one_page_live": "8e02c2b4af6e8efdf02b37ac37b6a1a8d3d079990a3f16488ba808b297650e08",
+    "nodes_two_pages_page_1": "526d4d0ecb842a7e4401a8eea34b939bb05e62fee00f511fb7bd65a3f68b38c3",
+    "nodes_two_pages_page_2": "14703ea1447e6d3006480bad6cd0c66d11e8d9a4f6b98113b370d9fc85fa42bb",
+    "nodes_mixed_waiting_offline": "dc7c4727e302243683adfcf9f5ee8eabbfd5afb6c43f73c46feea460e9246b55",
+    "nodes_link_lost_stale": "391acb9277a77f3ca9eb5bffdb75205aabc262bdee541830f8d4181c8811407d",
+    "nodes_selected_row": "a845cbc8fb69c6815bf340854adcba1438c44228fb18d375145346321bc18804",
+    "nodes_row_1_pressed": "8ee94217a80955bdbf41fffdcc8490b47533177ce5371372f6be1fc4ab75a45f",
+    "nodes_row_2_pressed": "2134dc458778892d98df00810bbc85b4405a389d9451f3c3a1b026a9092b704e",
+    "nodes_row_3_pressed": "84d6623edfad47dbc7857ceb300b45b3659012e34546cdc95f05bce37f4929b2",
+    "nodes_previous_pressed": "aca61b23b483c63c929d3cf284eb9a4f1317c8a7565a0c4377812160a7c41389",
+    "nodes_back_pressed": "5eb86c5668de35232e9e6b853321b6e001a4d4738890efa0c6d54adb9924d6f0",
+    "nodes_next_pressed": "0557218aeec6bcd623a11434552f9b6ebf8f4b90a52d32695079f4dc41e1bf67",
+}
+
 
 def complete_v2_node(**changes) -> dict:
     value = node(
@@ -217,6 +244,39 @@ def complete_v2_node(**changes) -> dict:
     )
     value.update(changes)
     return value
+
+
+def phase_6_nodes() -> tuple[dict, ...]:
+    waiting_value = waiting_node()
+    waiting_value.update({"node_id": "node-b", "display_name": "Beta waiting"})
+    return (
+        complete_v2_node(
+            node_id="node-c",
+            display_name="Gamma restored",
+            online=False,
+            cpu={"usage_percent": 31, "temperature_c": None, "power_w": None},
+            memory={"usage_percent": 52},
+            gpu=[],
+            storage={"usage_percent": 71},
+            received_at_utc="2026-07-12T02:58:00Z",
+        ),
+        complete_v2_node(
+            node_id="node-a",
+            display_name="Alpha live",
+            cpu={"usage_percent": 47, "temperature_c": 63, "power_w": 55},
+            memory={"usage_percent": 63},
+            gpu=[],
+        ),
+        waiting_value,
+        complete_v2_node(
+            node_id="node-d",
+            display_name="Delta GPU",
+            cpu={"usage_percent": 22, "temperature_c": None, "power_w": None},
+            memory={"usage_percent": 44},
+            gpu=[{"usage_percent": 81}],
+            storage={"usage_percent": 12},
+        ),
+    )
 
 
 class DisplayTests(unittest.TestCase):
@@ -395,7 +455,7 @@ class DisplayTests(unittest.TestCase):
                 ("CPU", "READY", BRIGHT),
                 ("MEMORY", "READY", GREEN),
                 ("GRAPHICS", "NO DATA", MUTED),
-                ("NODES", "LATER", MUTED),
+                ("NODES", "1 NODE", GREEN),
             ),
             1: (
                 ("STORAGE", "READY", GREEN),
@@ -455,9 +515,9 @@ class DisplayTests(unittest.TestCase):
             self.assertIn(((0, 192, 319, 192), {"fill": MUTED}), line_calls)
             if page == 0:
                 self.assertIn(((3, 35, 156, 108), {"outline": MUTED, "width": 1}), rectangle_calls)
-                self.assertIn(((237, 123, 243, 129), {"outline": MUTED, "width": 2}), rectangle_calls)
-                self.assertIn(((226, 144, 232, 150), {"outline": MUTED, "width": 2}), rectangle_calls)
-                self.assertIn(((248, 144, 254, 150), {"outline": MUTED, "width": 2}), rectangle_calls)
+                self.assertIn(((237, 123, 243, 129), {"outline": GREEN, "width": 2}), rectangle_calls)
+                self.assertIn(((226, 144, 232, 150), {"outline": GREEN, "width": 2}), rectangle_calls)
+                self.assertIn(((248, 144, 254, 150), {"outline": GREEN, "width": 2}), rectangle_calls)
             else:
                 self.assertIn(((226, 125, 254, 149), {"outline": MUTED, "width": 2}), rectangle_calls)
 
@@ -485,7 +545,7 @@ class DisplayTests(unittest.TestCase):
     def test_phase_5_menu_pressed_feedback_is_localized_and_disabled_tiles_stay_idle(self) -> None:
         value = complete_v2_node()
         for page, actions in {
-            0: ("menu_tile_cpu", "menu_tile_memory", "menu_tile_gpu"),
+            0: ("menu_tile_cpu", "menu_tile_memory", "menu_tile_gpu", "menu_tile_nodes"),
             1: ("menu_tile_storage", "menu_tile_network", "menu_tile_health"),
         }.items():
             state = UiState(screen=Screen.MAIN_MENU, menu_page=page)
@@ -522,7 +582,6 @@ class DisplayTests(unittest.TestCase):
         unavailable = node()
         for page, point, forbidden_action in (
             (0, (80, 152), "menu_tile_gpu"),
-            (0, (240, 152), "menu_tile_nodes"),
             (1, (80, 72), "menu_tile_storage"),
             (1, (240, 152), "menu_tile_system"),
         ):
@@ -533,6 +592,23 @@ class DisplayTests(unittest.TestCase):
                     render(unavailable, ui_state=state).tobytes(),
                     render(unavailable, ui_state=state, pressed_action=forbidden_action).tobytes(),
                 )
+        empty_state = UiState(screen=Screen.MAIN_MENU)
+        self.assertIsNone(visible_action_at(
+            empty_state,
+            unavailable,
+            240,
+            152,
+            (),
+        ))
+        self.assertEqual(
+            render(unavailable, ui_state=empty_state, nodes=()).tobytes(),
+            render(
+                unavailable,
+                ui_state=empty_state,
+                pressed_action="menu_tile_nodes",
+                nodes=(),
+            ).tobytes(),
+        )
 
     def test_phase_5_menu_render_hashes_are_exact(self) -> None:
         now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
@@ -556,7 +632,7 @@ class DisplayTests(unittest.TestCase):
                 None,
             ),
         }
-        for category_id in ("cpu", "memory", "gpu"):
+        for category_id in ("cpu", "memory", "gpu", "nodes"):
             scenarios[f"menu_page_1_{category_id}_pressed"] = (
                 full, UiState(screen=Screen.MAIN_MENU), f"menu_tile_{category_id}"
             )
@@ -830,8 +906,15 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual("health", state.category_id(second))
 
     def test_future_screens_reject_real_nodes_but_keep_empty_state_safe(self) -> None:
+        self.assertEqual(
+            (320, 240),
+            render(
+                node(),
+                ui_state=UiState(screen=Screen.NODES),
+                nodes=(node(),),
+            ).size,
+        )
         for screen in (
-            Screen.NODES,
             Screen.SYSTEM,
             Screen.POWER_CONFIRM,
             Screen.POWER_PENDING,
@@ -1374,6 +1457,10 @@ class DisplayTests(unittest.TestCase):
     def test_application_uses_shared_visible_action_resolver(self) -> None:
         source = (Path(__file__).parents[1] / "display" / "app.py").read_text(encoding="utf-8")
         self.assertIn("visible_action_at", source)
+        self.assertIn("tuple(nodes)", source)
+        self.assertIn("nodes=tuple(nodes)", source)
+        self.assertIn("state.menu_page", source)
+        self.assertIn("state.nodes_page", source)
         self.assertNotIn("pressed_action = touch_action", source)
         for duplicated_authority in (
             "VALUES_GRAPH_HITBOX",
@@ -1495,6 +1582,403 @@ class DisplayTests(unittest.TestCase):
         for item in CATEGORIES:
             for metric in item.chart_metrics:
                 self.assertIsNone(history.series("desktop", item.id, metric.id)[-1].value)
+
+    def test_phase_6_nodes_navigation_geometry_ordering_and_actions_are_exact(self) -> None:
+        self.assertEqual(3, NODES_PAGE_SIZE)
+        self.assertEqual(
+            ((0, 32, 320, 85), (0, 85, 320, 138), (0, 138, 320, 192)),
+            NODES_ROW_RECTS,
+        )
+        self.assertEqual((53, 53, 54), tuple(
+            bottom - top for _, top, _, bottom in NODES_ROW_RECTS
+        ))
+        self.assertEqual((32, 85, 138), tuple(top for _, top, _, _ in NODES_ROW_RECTS))
+        self.assertEqual((85, 138, 192), tuple(bottom for _, _, _, bottom in NODES_ROW_RECTS))
+        self.assertEqual(160, sum(bottom - top for _, top, _, bottom in NODES_ROW_RECTS))
+        self.assertTrue(all(
+            NODES_ROW_RECTS[index][3] == NODES_ROW_RECTS[index + 1][1]
+            for index in range(2)
+        ))
+        footers = (
+            NODES_PREVIOUS_PAGE_HITBOX,
+            NODES_BACK_HITBOX,
+            NODES_NEXT_PAGE_HITBOX,
+        )
+        self.assertEqual(
+            ((0, 192, 64, 240), (64, 192, 256, 240), (256, 192, 320, 240)),
+            footers,
+        )
+        self.assertEqual((64, 192, 64), tuple(right - left for left, _, right, _ in footers))
+        self.assertEqual((48, 48, 48), tuple(bottom - top for _, top, _, bottom in footers))
+
+        values = [node(node_id="node-c"), node(node_id="node-a"), node(node_id="node-b"), node(node_id="node-d")]
+        before = copy.deepcopy(values)
+        self.assertEqual(
+            ("node-a", "node-b", "node-c", "node-d"),
+            tuple(item["node_id"] for item in ordered_nodes(values)),
+        )
+        self.assertEqual(before, values)
+        self.assertIsInstance(ordered_nodes(values), tuple)
+        self.assertEqual(
+            (1, 1, 1, 2, 2, 3),
+            tuple(nodes_page_count(count) for count in (0, 1, 3, 4, 6, 7)),
+        )
+        self.assertEqual(
+            (0, 0, 1, 1),
+            tuple(normalize_nodes_page(page, 4) for page in (-1, 0, 1, 2)),
+        )
+        self.assertEqual(0, normalize_nodes_page(99, 0))
+        self.assertEqual(
+            ("node-a", "node-b", "node-c"),
+            tuple(item["node_id"] for item in nodes_page_items(values, 0)),
+        )
+        self.assertEqual(
+            ("node-d",),
+            tuple(item["node_id"] for item in nodes_page_items(values, 1)),
+        )
+        self.assertEqual(
+            ("nodes_select_0", "nodes_select_0", "nodes_select_1", "nodes_select_1",
+             "nodes_select_2", "nodes_select_2"),
+            tuple(nodes_action_at(0, 4, *point) for point in (
+                (0, 32), (319, 84), (0, 85), (319, 137), (0, 138), (319, 191)
+            )),
+        )
+        self.assertEqual("nodes_select_0", nodes_action_at(1, 4, 10, 40))
+        self.assertIsNone(nodes_action_at(1, 4, 10, 90))
+        self.assertEqual(
+            ("nodes_previous_page", "nodes_back", "nodes_next_page"),
+            tuple(nodes_action_at(0, 4, x, 210) for x in (10, 160, 300)),
+        )
+        self.assertEqual(
+            (None, "nodes_back", None),
+            tuple(nodes_action_at(0, 3, x, 210) for x in (10, 160, 300)),
+        )
+        for point in ((-1, 40), (320, 40), (0, 31), (319, 240)):
+            self.assertIsNone(nodes_action_at(0, 4, *point))
+
+    def test_phase_6_nodes_renderer_routing_header_rows_and_stale_status_are_exact(self) -> None:
+        values = phase_6_nodes()
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        text_calls = []
+        rectangle_calls = []
+        ellipse_calls = []
+        line_calls = []
+        original_text = ImageDraw.ImageDraw.text
+        original_rectangle = ImageDraw.ImageDraw.rectangle
+        original_ellipse = ImageDraw.ImageDraw.ellipse
+        original_line = ImageDraw.ImageDraw.line
+
+        def record_text(draw, xy, text, *args, **kwargs):
+            text_calls.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        def record_rectangle(draw, xy, *args, **kwargs):
+            rectangle_calls.append((xy, kwargs))
+            return original_rectangle(draw, xy, *args, **kwargs)
+
+        def record_ellipse(draw, xy, *args, **kwargs):
+            ellipse_calls.append((xy, kwargs))
+            return original_ellipse(draw, xy, *args, **kwargs)
+
+        def record_line(draw, xy, *args, **kwargs):
+            line_calls.append((xy, kwargs))
+            return original_line(draw, xy, *args, **kwargs)
+
+        state = UiState(screen=Screen.NODES, selected_node_id="node-b", nodes_page=0)
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_text), \
+                patch.object(ImageDraw.ImageDraw, "rectangle", new=record_rectangle), \
+                patch.object(ImageDraw.ImageDraw, "ellipse", new=record_ellipse), \
+                patch.object(ImageDraw.ImageDraw, "line", new=record_line), \
+                patch("display.renderer._menu") as menu, \
+                patch("display.renderer._menu_footer") as menu_footer, \
+                patch("display.renderer._footer") as footer, \
+                patch("display.renderer._detail_header") as detail_header, \
+                patch("display.renderer._values_detail") as values_detail, \
+                patch("display.renderer._graph_footer") as graph_footer, \
+                patch("display.renderer._fit", wraps=_fit) as fit:
+            render(values[0], ui_state=state, nodes=values, now=now)
+        for forbidden in (menu, menu_footer, footer, detail_header, values_detail, graph_footer):
+            forbidden.assert_not_called()
+
+        title = next(call for call in text_calls if call[0] == (10, 16))
+        count = next(call for call in text_calls if call[0] == (310, 16))
+        self.assertEqual(("NODES", GREEN, "lm", 15), (
+            title[1], title[2]["fill"], title[2]["anchor"], title[2]["font"].size
+        ))
+        self.assertEqual(("4 NODES", MUTED, "rm", 13), (
+            count[1], count[2]["fill"], count[2]["anchor"], count[2]["font"].size
+        ))
+        self.assertEqual(
+            ("ALPHA LIVE", "BETA WAITING", "GAMMA RESTORED"),
+            tuple(text for xy, text, _ in text_calls if xy[0] == 104),
+        )
+        self.assertEqual(
+            ("ONLINE", "WAITING", "OFFLINE"),
+            tuple(text for xy, text, _ in text_calls if xy[0] == 22),
+        )
+        self.assertEqual(("2s", "—", "2m"), tuple(
+            text for xy, text, _ in text_calls if xy[0] == 310 and xy[1] in (45, 98, 151)
+        ))
+        self.assertEqual(
+            ((10, 70), (112, 70), (220, 70)),
+            tuple(xy for xy, text, _ in text_calls if text in {"CPU 47%", "RAM 63%", "TEMP 63°C"}),
+        )
+        self.assertTrue({
+            "CPU 47%", "RAM 63%", "TEMP 63°C",
+            "CPU —", "RAM —", "N/A",
+            "CPU 31%", "RAM 52%", "DISK 71%",
+        }.issubset({text for _, text, _ in text_calls}))
+        self.assertIn(((3, 88, 316, 134), {"outline": MUTED, "width": 1}), rectangle_calls)
+        self.assertEqual(
+            {(8, 41, 16, 49), (8, 94, 16, 102), (8, 147, 16, 155)},
+            {xy for xy, _ in ellipse_calls},
+        )
+        self.assertTrue({85, 138, 192}.issubset({xy[1] for xy, _ in line_calls if len(xy) == 4}))
+        self.assertEqual(3, sum(call.args[3] == 76 for call in fit.call_args_list))
+        self.assertEqual(3, sum(call.args[3] == 142 for call in fit.call_args_list))
+        footer_calls = [(text, kwargs["fill"], kwargs["font"].size)
+                        for xy, text, kwargs in text_calls if xy[1] == 216]
+        self.assertEqual(
+            [("<", GREEN, 18), ("BACK 1/2", GREEN, 13), (">", GREEN, 18)],
+            footer_calls,
+        )
+
+        second_page_text = []
+
+        def record_second_page_text(draw, xy, text, *args, **kwargs):
+            second_page_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_second_page_text):
+            render(
+                values[0],
+                ui_state=UiState(screen=Screen.NODES, selected_node_id="node-d", nodes_page=1),
+                nodes=values,
+                now=now,
+            )
+        self.assertEqual(("DELTA GPU",), tuple(
+            text for xy, text, _ in second_page_text if xy[0] == 104
+        ))
+        self.assertIn("GPU 81%", {text for _, text, _ in second_page_text})
+
+        link_lost_text = []
+
+        def record_link_lost_text(draw, xy, text, *args, **kwargs):
+            link_lost_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_link_lost_text):
+            render(values[0], hub_online=False, ui_state=state, nodes=values, now=now)
+        self.assertEqual(("LINK LOST",) * 3, tuple(
+            text for xy, text, _ in link_lost_text if xy[0] == 22
+        ))
+
+    def test_phase_6_main_menu_nodes_count_activation_and_system_inactivity(self) -> None:
+        values = phase_6_nodes()
+        text_calls = []
+        original_text = ImageDraw.ImageDraw.text
+
+        def record_text(draw, xy, text, *args, **kwargs):
+            text_calls.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        state = UiState(screen=Screen.MAIN_MENU)
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_text):
+            normal = render(values[0], ui_state=state, nodes=values)
+        nodes_title = next(call for call in text_calls if call[1] == "NODES")
+        nodes_count = next(call for call in text_calls if call[1] == "4 NODES")
+        self.assertEqual((GREEN, GREEN), (
+            nodes_title[2]["fill"], nodes_count[2]["fill"]
+        ))
+        self.assertEqual(
+            "menu_tile_nodes",
+            visible_action_at(state, values[0], 240, 152, values),
+        )
+        pressed = render(
+            values[0],
+            ui_state=state,
+            pressed_action="menu_tile_nodes",
+            nodes=values,
+        )
+        difference = ImageChops.difference(normal, pressed).getbbox()
+        self.assertIsNotNone(difference)
+        self.assertGreaterEqual(difference[0], MENU_TILE_RECTS[3][0])
+        self.assertGreaterEqual(difference[1], MENU_TILE_RECTS[3][1])
+        self.assertLessEqual(difference[2], MENU_TILE_RECTS[3][2])
+        self.assertLessEqual(difference[3], MENU_TILE_RECTS[3][3])
+
+        empty_text = []
+
+        def record_empty_text(draw, xy, text, *args, **kwargs):
+            empty_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_empty_text):
+            empty = render(values[0], ui_state=state, nodes=())
+        no_nodes = next(call for call in empty_text if call[1] == "NO NODES")
+        self.assertEqual(MUTED, no_nodes[2]["fill"])
+        self.assertEqual(
+            empty.tobytes(),
+            render(
+                values[0],
+                ui_state=state,
+                pressed_action="menu_tile_nodes",
+                nodes=(),
+            ).tobytes(),
+        )
+
+        system_state = UiState(screen=Screen.MAIN_MENU, menu_page=1)
+        system = render(values[0], ui_state=system_state, nodes=values)
+        self.assertIsNone(visible_action_at(system_state, values[0], 240, 152, values))
+        self.assertEqual(
+            system.tobytes(),
+            render(
+                values[0],
+                ui_state=system_state,
+                pressed_action="menu_tile_system",
+                nodes=values,
+            ).tobytes(),
+        )
+
+    def test_phase_6_nodes_pressed_feedback_is_localized_and_actionable_only(self) -> None:
+        values = phase_6_nodes()
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        state = UiState(screen=Screen.NODES, selected_node_id="node-d")
+        normal = render(values[0], ui_state=state, nodes=values, now=now)
+        original_text = ImageDraw.ImageDraw.text
+        original_ellipse = ImageDraw.ImageDraw.ellipse
+        for index, row in enumerate(NODES_ROW_RECTS):
+            text_calls = []
+            ellipse_calls = []
+
+            def record_text(draw, xy, text, *args, **kwargs):
+                text_calls.append((xy, text, kwargs))
+                return original_text(draw, xy, text, *args, **kwargs)
+
+            def record_ellipse(draw, xy, *args, **kwargs):
+                ellipse_calls.append((xy, kwargs))
+                return original_ellipse(draw, xy, *args, **kwargs)
+
+            action = f"nodes_select_{index}"
+            with patch.object(ImageDraw.ImageDraw, "text", new=record_text), \
+                    patch.object(ImageDraw.ImageDraw, "ellipse", new=record_ellipse):
+                pressed = render(
+                    values[0],
+                    ui_state=state,
+                    pressed_action=action,
+                    nodes=values,
+                    now=now,
+                )
+            difference = ImageChops.difference(normal, pressed).getbbox()
+            self.assertIsNotNone(difference)
+            self.assertGreaterEqual(difference[0], row[0])
+            self.assertGreaterEqual(difference[1], row[1])
+            self.assertLessEqual(difference[2], row[2])
+            self.assertLessEqual(difference[3], row[3])
+            self.assertEqual(ImageColor.getrgb(MUTED), pressed.getpixel((4, row[1] + 4)))
+            row_text = [
+                kwargs["fill"]
+                for xy, _, kwargs in text_calls
+                if row[1] <= xy[1] < row[3]
+            ]
+            self.assertTrue(row_text and all(fill == BACKGROUND for fill in row_text))
+            dot = next(call for call in ellipse_calls if call[0][1] == row[1] + 9)
+            self.assertEqual(BACKGROUND, dot[1]["fill"])
+
+        for action, hitbox in (
+            ("nodes_previous_page", NODES_PREVIOUS_PAGE_HITBOX),
+            ("nodes_back", NODES_BACK_HITBOX),
+            ("nodes_next_page", NODES_NEXT_PAGE_HITBOX),
+        ):
+            pressed = render(
+                values[0],
+                ui_state=state,
+                pressed_action=action,
+                nodes=values,
+                now=now,
+            )
+            difference = ImageChops.difference(normal, pressed).getbbox()
+            self.assertIsNotNone(difference)
+            self.assertGreaterEqual(difference[0], hitbox[0])
+            self.assertGreaterEqual(difference[1], hitbox[1])
+            self.assertLessEqual(difference[2], hitbox[2])
+            self.assertLessEqual(difference[3], hitbox[3])
+
+        one = (values[1],)
+        one_state = UiState(screen=Screen.NODES, selected_node_id="node-a")
+        one_normal = render(one[0], ui_state=one_state, nodes=one, now=now)
+        for action in ("nodes_previous_page", "nodes_next_page"):
+            self.assertEqual(
+                one_normal.tobytes(),
+                render(
+                    one[0],
+                    ui_state=one_state,
+                    pressed_action=action,
+                    nodes=one,
+                    now=now,
+                ).tobytes(),
+            )
+
+    def test_phase_6_nodes_and_changed_menu_hashes_are_exact(self) -> None:
+        values = phase_6_nodes()
+        one = (values[1],)
+        mixed = values[:3]
+        now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
+        scenarios = {
+            "nodes_one_page_live": render(
+                one[0], ui_state=UiState(screen=Screen.NODES, selected_node_id="node-a"),
+                nodes=one, now=now,
+            ),
+            "nodes_two_pages_page_1": render(
+                values[0], ui_state=UiState(screen=Screen.NODES, selected_node_id="node-a"),
+                nodes=values, now=now,
+            ),
+            "nodes_two_pages_page_2": render(
+                values[0], ui_state=UiState(screen=Screen.NODES, selected_node_id="node-d", nodes_page=1),
+                nodes=values, now=now,
+            ),
+            "nodes_mixed_waiting_offline": render(
+                mixed[0], ui_state=UiState(screen=Screen.NODES, selected_node_id="node-b"),
+                nodes=mixed, now=now,
+            ),
+            "nodes_link_lost_stale": render(
+                mixed[0], hub_online=False,
+                ui_state=UiState(screen=Screen.NODES, selected_node_id="node-b"),
+                nodes=mixed, now=now,
+            ),
+            "nodes_selected_row": render(
+                values[0], ui_state=UiState(screen=Screen.NODES, selected_node_id="node-c"),
+                nodes=values, now=now,
+            ),
+        }
+        for index in range(3):
+            scenarios[f"nodes_row_{index + 1}_pressed"] = render(
+                values[0], ui_state=UiState(screen=Screen.NODES, selected_node_id="node-d"),
+                pressed_action=f"nodes_select_{index}", nodes=values, now=now,
+            )
+        for name, action in (
+            ("nodes_previous_pressed", "nodes_previous_page"),
+            ("nodes_back_pressed", "nodes_back"),
+            ("nodes_next_pressed", "nodes_next_page"),
+        ):
+            scenarios[name] = render(
+                values[0], ui_state=UiState(screen=Screen.NODES, selected_node_id="node-a"),
+                pressed_action=action, nodes=values, now=now,
+            )
+        self.assertEqual(set(NODES_RENDER_HASHES), set(scenarios))
+        for name, image in scenarios.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    NODES_RENDER_HASHES[name],
+                    hashlib.sha256(image.tobytes()).hexdigest(),
+                )
+
+    def test_phase_6_empty_nodes_snapshot_uses_overview_shell_and_footer(self) -> None:
+        state = UiState(screen=Screen.NODES)
+        self.assertEqual(
+            render(None, ui_state=UiState()).tobytes(),
+            render(None, ui_state=state, nodes=()).tobytes(),
+        )
 
     def test_calibration_maps_and_clamps_coordinates(self) -> None:
         calibration = {

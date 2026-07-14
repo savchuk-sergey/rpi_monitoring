@@ -51,6 +51,30 @@ MENU_NEXT_PAGE_HITBOX: Rect = (
     320,
     240,
 )
+NODES_PAGE_SIZE = 3
+NODES_ROW_RECTS: tuple[Rect, ...] = (
+    (0, 32, 320, 85),
+    (0, 85, 320, 138),
+    (0, 138, 320, 192),
+)
+NODES_PREVIOUS_PAGE_HITBOX: Rect = (
+    0,
+    192,
+    64,
+    240,
+)
+NODES_BACK_HITBOX: Rect = (
+    64,
+    192,
+    256,
+    240,
+)
+NODES_NEXT_PAGE_HITBOX: Rect = (
+    256,
+    192,
+    320,
+    240,
+)
 
 
 def move(index: int, count: int, delta: int) -> int:
@@ -127,6 +151,68 @@ def menu_action_at(page: int, x: int, y: int) -> str | None:
             return action
     category_id = menu_tile_id_at(page, x, y)
     return f"menu_tile_{category_id}" if category_id is not None else None
+
+
+def ordered_nodes(
+    nodes: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(sorted(nodes, key=lambda node: str(node.get("node_id") or "")))
+
+
+def nodes_page_count(node_count: int) -> int:
+    return max(
+        1,
+        (max(0, node_count) + NODES_PAGE_SIZE - 1)
+        // NODES_PAGE_SIZE,
+    )
+
+
+def normalize_nodes_page(page: int, node_count: int) -> int:
+    if page < 0:
+        return 0
+    page_count = nodes_page_count(node_count)
+    if page >= page_count:
+        return page_count - 1
+    return page
+
+
+def nodes_page_items(
+    nodes: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    page: int,
+) -> tuple[dict[str, Any], ...]:
+    ordered = ordered_nodes(nodes)
+    normalized_page = normalize_nodes_page(page, len(ordered))
+    start = normalized_page * NODES_PAGE_SIZE
+    return ordered[start:start + NODES_PAGE_SIZE]
+
+
+def nodes_action_at(
+    page: int,
+    node_count: int,
+    x: int,
+    y: int,
+) -> str | None:
+    page_count = nodes_page_count(node_count)
+    for action, hitbox in (
+        ("nodes_previous_page", NODES_PREVIOUS_PAGE_HITBOX),
+        ("nodes_back", NODES_BACK_HITBOX),
+        ("nodes_next_page", NODES_NEXT_PAGE_HITBOX),
+    ):
+        left, top, right, bottom = hitbox
+        if left <= x < right and top <= y < bottom:
+            if action == "nodes_back" or page_count > 1:
+                return action
+            return None
+
+    normalized_page = normalize_nodes_page(page, node_count)
+    visible_count = min(
+        NODES_PAGE_SIZE,
+        max(0, node_count - normalized_page * NODES_PAGE_SIZE),
+    )
+    for index, (left, top, right, bottom) in enumerate(NODES_ROW_RECTS):
+        if left <= x < right and top <= y < bottom:
+            return f"nodes_select_{index}" if index < visible_count else None
+    return None
 
 
 def map_touch(raw_x: int, raw_y: int, calibration: dict[str, Any]) -> tuple[int, int]:
