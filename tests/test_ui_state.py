@@ -216,8 +216,24 @@ class UiStateTests(unittest.TestCase):
             )
         unavailable = UiState(screen=Screen.MAIN_MENU, menu_page=1)
         unavailable_node = node()
-        self.assertIsNone(visible_action_at(unavailable, unavailable_node, 80, 72))
-        self.assertIsNone(visible_action_at(unavailable, unavailable_node, 240, 72))
+        self.assertEqual(
+            "menu_hint_storage",
+            visible_action_at(unavailable, unavailable_node, 80, 72),
+        )
+        self.assertEqual(
+            "menu_hint_network",
+            visible_action_at(unavailable, unavailable_node, 240, 72),
+        )
+        self.assertEqual(
+            "menu_hint_nodes",
+            visible_action_at(
+                UiState(screen=Screen.MAIN_MENU),
+                unavailable_node,
+                240,
+                152,
+                (),
+            ),
+        )
         self.assertEqual(
             ("previous", "center", "next"),
             tuple(visible_action_at(unavailable, None, x, 210) for x in (10, 160, 300)),
@@ -1052,7 +1068,10 @@ class UiStateTests(unittest.TestCase):
             "menu_tile_nodes",
             visible_action_at(state, nodes[0], 240, 152, nodes),
         )
-        self.assertIsNone(visible_action_at(state, nodes[0], 240, 152, ()))
+        self.assertEqual(
+            "menu_hint_nodes",
+            visible_action_at(state, nodes[0], 240, 152, ()),
+        )
         system = UiState(screen=Screen.MAIN_MENU, menu_page=1)
         self.assertEqual("menu_tile_system", visible_action_at(system, nodes[0], 240, 152, nodes))
 

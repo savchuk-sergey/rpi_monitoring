@@ -3,7 +3,7 @@ Description=Grant the resource monitor read-only access to RAPL energy counters
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'for file in /sys/class/powercap/intel-rapl:*/energy_uj; do [ -f "$file" ] || continue; chgrp homelab-monitor-agent "$file"; chmod 0440 "$file"; done'
+ExecStart=/bin/sh -c 'grep -q "^vendor_id.*GenuineIntel" /proc/cpuinfo || exit 0; for attempt in 1 2 3 4 5; do found=0; for file in /sys/class/powercap/intel-rapl:*/energy_uj; do [ -f "$file" ] || continue; chgrp homelab-monitor-agent "$file" || exit 1; chmod 0440 "$file" || exit 1; found=1; done; [ "$found" -eq 1 ] && exit 0; sleep 1; done'
 RemainAfterExit=yes
 
 [Install]

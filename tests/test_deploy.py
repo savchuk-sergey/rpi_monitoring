@@ -19,6 +19,12 @@ LINUX_UNIT = (
     / "systemd"
     / "homelab-resource-monitor-linux-agent.service"
 )
+RAPL_PERMISSIONS_UNIT = (
+    Path(__file__).parents[1]
+    / "deploy"
+    / "systemd"
+    / "homelab-resource-monitor-rapl-permissions.service"
+)
 
 
 class DeploymentHelperTests(unittest.TestCase):
@@ -54,6 +60,12 @@ class DeploymentHelperTests(unittest.TestCase):
     def test_pi_deploy_normalizes_windows_line_endings(self):
         script = PI_DEPLOY.read_text()
         self.assertIn("sed -i 's/\\r`$//'", script)
+
+    def test_rapl_permissions_wait_for_late_driver(self):
+        unit = RAPL_PERMISSIONS_UNIT.read_text()
+        self.assertIn("for attempt in 1 2 3 4 5", unit)
+        self.assertIn("sleep 1", unit)
+        self.assertIn('chgrp homelab-monitor-agent "$file" || exit 1', unit)
 
 
 if __name__ == "__main__":

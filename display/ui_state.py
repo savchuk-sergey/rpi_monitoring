@@ -249,14 +249,18 @@ def visible_action_at(
         if action in {"menu_previous_page", "menu_back", "menu_next_page"}:
             return action
         if action == "menu_tile_nodes":
-            return action if snapshot else None
+            return action if snapshot else "menu_hint_nodes"
         if action == "menu_tile_system":
             return action
         if action is None:
             return None
         category_id = action.removeprefix("menu_tile_")
         selected = category(category_id)
-        return action if selected.id == category_id and selected.available(node) else None
+        return (
+            action
+            if selected.id == category_id and selected.available(node)
+            else f"menu_hint_{category_id}"
+        )
     if state.screen == Screen.NODES and snapshot:
         return nodes_action_at(
             state.nodes_page,

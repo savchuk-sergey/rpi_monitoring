@@ -156,9 +156,9 @@ def waiting_node():
     }
 
 
-UNCHANGED_RENDER_HASHES = {
-    "overview_legacy": "7a64eb574d9d969407dec89fbf7ab8493a748dadec645124825d6e9cef15c9d4",
-    "overview_waiting": "7064e7983ea4571ed55586a2d656d493bbce9032bb44374853015a5d7faac6d4",
+OVERVIEW_RENDER_HASHES = {
+    "overview_legacy": "e7b6dec1f10438128174c1364517a407bc1dd6fee1388cca0c25d782b65bf8b9",
+    "overview_waiting": "30e82bb7eaa38aa61be750c6279d3080b9ef6c0cc6d0eecaa860892b4e774300",
 }
 
 OLD_MAIN_MENU_HASHES = {
@@ -167,25 +167,25 @@ OLD_MAIN_MENU_HASHES = {
 }
 
 MENU_RENDER_HASHES = {
-    "menu_page_1_back_pressed": "0945b1e836db6de7b483a18aac86ad093f10b034b7245ad2941f127e497b354e",
-    "menu_page_1_capabilities": "779e77fb5582e89c474aa6fac739edab98f4006014fea2637cd5b657f4469883",
-    "menu_page_1_cpu_pressed": "d6e2fc5e6dce08dc95d6936bb54a815de21942bc04d8b300d83bc42d63c3472b",
-    "menu_page_1_gpu_pressed": "9ba441a2937ad58db5d7b82d8d968ae73bca17cbe139e83a23a4b1b73841c566",
-    "menu_page_1_legacy": "779e77fb5582e89c474aa6fac739edab98f4006014fea2637cd5b657f4469883",
-    "menu_page_1_memory_pressed": "17df54110f05a439769c6eafebd6b80769d9fd85930097e2f8927c7f6da28bd7",
-    "menu_page_1_next_pressed": "8cf98b2076b6e0a5136c2dd169bb064217102a7e5f23fd744db020e3e7ff1475",
-    "menu_page_1_nodes_pressed": "d4e2b8c0dcf33974026841a75cd9c941980874bc7eaab8c3450e0b5219db2d1d",
-    "menu_page_1_previous_pressed": "4a8a962442e625b33d1988b7f8733e37ef120769319b25a8ed524e9656bca3bc",
-    "menu_page_2_back_pressed": "aff2a6e5648b77b8517feb9048b7e2c2414dc7c195ab2df36dcd2669565c11c5",
-    "menu_page_2_capabilities": "f236468dee1b9b4f246927bcda78a69559f6de05303fe7a94a1e0e1a96268319",
-    "menu_page_2_health_errors": "122e8c9c6e1e85c01ae869177cdaac17a7c86728801853ba26738231a29489c5",
-    "menu_page_2_health_pressed": "8fed416290e6956589b21287751a715ee531ef3669618f9f35590eb1fe8df3ad",
-    "menu_page_2_legacy": "e78e8a85a26e5bda63e452a20227006289d64746dacb218b8323f82c417356d4",
-    "menu_page_2_network_pressed": "6fbd87c87d684b4dd8e3cb8bbbff656a11ad9dfe317ef3f32fc728fec54d1ce7",
-    "menu_page_2_next_pressed": "f2d0b041212ccadc5bb8f645783989b5921f66621beef33b9fcd6a968dcfbb55",
-    "menu_page_2_previous_pressed": "a0513acfdddc0c0dd24f7efce2271f4ea5b1484aabeb6b10de695373515a913a",
-    "menu_page_2_storage_pressed": "834dfa1dc4913f5384f9ba51ca9884f6cea88c02d9865727bb0b7df1be7ee447",
-    "menu_page_2_system_pressed": "283d45a6e38552e4bed267911d6521df792d6ee4bbe008fe59e7d3e257dc234e",
+    "menu_page_1_back_pressed": "092785014174fab65204c5bc5a291e9438e3d991b1b140968fd6d13268ae6511",
+    "menu_page_1_capabilities": "3ae259c5107d313c6a6a376201cb9e598effd9d4d1a9ba1531f64afc91d07479",
+    "menu_page_1_cpu_pressed": "1fd1f979c9e21d6f858a76c0b79771305496e750201577aaf0228449faba5ce1",
+    "menu_page_1_gpu_pressed": "fdef25a15db63568157dc5d712a04fb99b482980450aa543f40df9559eb332ba",
+    "menu_page_1_legacy": "3ae259c5107d313c6a6a376201cb9e598effd9d4d1a9ba1531f64afc91d07479",
+    "menu_page_1_memory_pressed": "cb8e26542e11a7732c09a9cf9a985652112e952cc23df9638234513e002abadd",
+    "menu_page_1_next_pressed": "85cd2192dad9935cf0d71c8d08d57b34ac9e4f75cbe4d2bc7643ddaaef83feca",
+    "menu_page_1_nodes_pressed": "12e7ed719527b716b50d0b2cd594213b7e57d330d5e109c60fc23020341f03fc",
+    "menu_page_1_previous_pressed": "924ba1aff5d72c0aa78f597563e7165c83f724237e8e6a529dd0d4fb16a3e243",
+    "menu_page_2_back_pressed": "7a33f4547e626c43bbef647e21b1e904d6fc22e330bdb67c6aed4cc71d531158",
+    "menu_page_2_capabilities": "731ced9bc90b6e2f42fd132673537180091e0d0eaa3d175a8c4d1522ea71087a",
+    "menu_page_2_health_errors": "f0ab763f6e675b75a02587ccd51ece942fe6d6be59bd8244e1c3a201bbfdc69c",
+    "menu_page_2_health_pressed": "d8a6de722a149464fff7af7f0478e3d6c2f8e515182823c428b71197c11859a6",
+    "menu_page_2_legacy": "1be73b733f1965dc565b99edd0b062ad26c4398ca650f92aefbc24e2376bb3ff",
+    "menu_page_2_network_pressed": "292a7b2ef0b03ac80e659fcbf512902e6d812bfbd5574dfedb5b729711fe2d27",
+    "menu_page_2_next_pressed": "30f9e6ae5d505b576853af10e8283ef0a90257d173bc988939687c776b47acc3",
+    "menu_page_2_previous_pressed": "0ad5667b5eda7b9e06705872ed4dfff948df4ad6a1d9bb92a1b5d45d6004ee0e",
+    "menu_page_2_storage_pressed": "dda3ba7636fae50f60ab0a3dbbf56192f7df14a629956acccb4494c341a50fd1",
+    "menu_page_2_system_pressed": "4097590e1915c1ee9be16e54f3a63dd4dd5551e413bbfaa2b18780e7fe49e126",
 }
 
 SYSTEM_RENDER_HASHES = {
@@ -486,6 +486,9 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual("0.7", _number(0.7))
         self.assertEqual("5", _number(5))
         self.assertEqual("100%", _value(100, "%"))
+        self.assertEqual("50%", _value(50.4, "%"))
+        self.assertEqual("64°", _value(63.5, "C"))
+        self.assertEqual("6W", _value(6.2, "W"))
         self.assertEqual("—", _value(None, "W"))
         self.assertEqual("63°C", _format_temperature(63))
         self.assertEqual("63.5°C", _format_temperature(63.5))
@@ -500,7 +503,7 @@ class DisplayTests(unittest.TestCase):
         state.screen = Screen.MAIN_MENU
         self.assertEqual((320, 240), render(node(), ui_state=state).size)
 
-    def test_unaffected_render_hashes_are_unchanged(self) -> None:
+    def test_overview_render_hashes_are_exact(self) -> None:
         now = datetime(2026, 7, 12, 3, 0, 3, tzinfo=timezone.utc)
         scenarios = {
             "overview_legacy": (node(), UiState(), None),
@@ -518,7 +521,98 @@ class DisplayTests(unittest.TestCase):
                         now=now,
                     ).tobytes()
                 ).hexdigest()
-                self.assertEqual(UNCHANGED_RENDER_HASHES[name], digest)
+                self.assertEqual(OVERVIEW_RENDER_HASHES[name], digest)
+
+    def test_overview_inline_meter_geometry_scaling_and_unavailable_state(self) -> None:
+        original_rectangle = ImageDraw.ImageDraw.rectangle
+        original_line = ImageDraw.ImageDraw.line
+
+        def render_calls(value):
+            rectangles = []
+            lines = []
+
+            def record_rectangle(draw, xy, *args, **kwargs):
+                rectangles.append((tuple(xy), kwargs.copy()))
+                return original_rectangle(draw, xy, *args, **kwargs)
+
+            def record_line(draw, xy, *args, **kwargs):
+                lines.append(tuple(xy))
+                return original_line(draw, xy, *args, **kwargs)
+
+            with (
+                patch.object(ImageDraw.ImageDraw, "rectangle", new=record_rectangle),
+                patch.object(ImageDraw.ImageDraw, "line", new=record_line),
+            ):
+                render(value)
+            meter_boxes = [
+                call
+                for call in rectangles
+                if call[0][0] >= 64
+                and call[0][2] <= 217
+                and call[0][1] in {56, 107, 158}
+            ]
+            return meter_boxes, lines
+
+        expected_boxes = {
+            (64 + index * 13, top + 16, 74 + index * 13, top + 27)
+            for top in (40, 91, 142)
+            for index in range(12)
+        }
+        default_boxes, default_lines = render_calls(node())
+        self.assertEqual(36, len(default_boxes))
+        self.assertEqual(expected_boxes, {box for box, _ in default_boxes})
+        self.assertEqual(
+            {56: 6, 107: 8, 158: 7},
+            {
+                y: sum(
+                    kwargs.get("fill") == GREEN
+                    for box, kwargs in default_boxes
+                    if box[1] == y
+                )
+                for y in (56, 107, 158)
+            },
+        )
+        self.assertTrue({
+            (76, 86, 308, 86),
+            (76, 137, 308, 137),
+            (76, 188, 308, 188),
+        }.isdisjoint(default_lines))
+
+        bounded_boxes, _ = render_calls(node(
+            cpu={"usage_percent": 150, "temperature_c": None, "power_w": 50},
+            memory={"usage_percent": -10},
+            gpu=[],
+        ))
+        self.assertEqual(
+            {56: 12, 107: 0, 158: 6},
+            {
+                y: sum(
+                    kwargs.get("fill") == GREEN
+                    for box, kwargs in bounded_boxes
+                    if box[1] == y
+                )
+                for y in (56, 107, 158)
+            },
+        )
+
+        unavailable_boxes, _ = render_calls(node(
+            cpu={"usage_percent": None, "temperature_c": None, "power_w": None},
+            memory={"usage_percent": None},
+            gpu=[],
+        ))
+        self.assertTrue(all(
+            kwargs.get("fill") == BACKGROUND and kwargs.get("outline") == MUTED
+            for _, kwargs in unavailable_boxes
+        ))
+
+        image = Image.new("RGB", (320, 240), BACKGROUND)
+        value_box = ImageDraw.Draw(image).textbbox(
+            (308, 62),
+            _value(100, "W"),
+            font=ImageFont.truetype(str(FONT_PATH), 38),
+            anchor="rm",
+        )
+        self.assertGreater(value_box[0], 217)
 
     def test_phase_5_menu_rendering_geometry_availability_and_footer_are_exact(self) -> None:
         capabilities = {
@@ -526,24 +620,28 @@ class DisplayTests(unittest.TestCase):
             "storage.usage_percent": {"supported": True, "source": "statvfs", "reason": None},
             "gpu.usage_percent": {"supported": False, "source": None, "reason": "sensor_not_found"},
         }
-        expected = {
+        expected_titles = {
+            0: ("CPU", "MEMORY", "GRAPHICS", "NODES"),
+            1: ("STORAGE", "NETWORK", "HEALTH", "SYSTEM"),
+        }
+        expected_icon_pixels = {
             0: (
-                ("CPU", "READY", BRIGHT),
-                ("MEMORY", "READY", GREEN),
-                ("GRAPHICS", "NO DATA", MUTED),
-                ("NODES", "1 NODE", GREEN),
+                ((67, 44), BRIGHT),
+                ((222, 45), GREEN),
+                ((62, 124), MUTED),
+                ((237, 119), GREEN),
             ),
             1: (
-                ("STORAGE", "READY", GREEN),
-                ("NETWORK", "NO DATA", MUTED),
-                ("HEALTH", "READY", GREEN),
-                ("SYSTEM", "LOCAL", GREEN),
+                ((80, 40), GREEN),
+                ((223, 47), MUTED),
+                ((76, 119), GREEN),
+                ((222, 121), GREEN),
             ),
         }
         original_text = ImageDraw.ImageDraw.text
         original_rectangle = ImageDraw.ImageDraw.rectangle
         original_line = ImageDraw.ImageDraw.line
-        for page, expected_tiles in expected.items():
+        for page in (0, 1):
             text_calls = []
             rectangle_calls = []
             line_calls = []
@@ -565,7 +663,7 @@ class DisplayTests(unittest.TestCase):
                     patch.object(ImageDraw.ImageDraw, "rectangle", new=record_rectangle), \
                     patch.object(ImageDraw.ImageDraw, "line", new=record_line), \
                     patch("display.renderer._footer") as standard_footer:
-                render(
+                image = render(
                     node(capabilities=capabilities),
                     ui_state=UiState(screen=Screen.MAIN_MENU, menu_page=page),
                 )
@@ -573,29 +671,31 @@ class DisplayTests(unittest.TestCase):
             self.assertIn(((10, 16), "MENU"), {(xy, text) for xy, text, _ in text_calls})
             self.assertIn((310, 16), {xy for xy, _, _ in text_calls})
             titles = tuple(
-                (text, kwargs["fill"])
+                (text, kwargs["fill"], kwargs["font"].size)
                 for xy, text, kwargs in text_calls
-                if xy in {(80, 87), (240, 87), (80, 167), (240, 167)}
+                if xy in {(80, 91), (240, 91), (80, 171), (240, 171)}
             )
-            subtitles = tuple(
-                (text, kwargs["fill"])
-                for xy, text, kwargs in text_calls
-                if xy in {(80, 101), (240, 101), (80, 181), (240, 181)}
+            self.assertEqual(
+                tuple((title, MUTED, 11) for title in expected_titles[page]),
+                titles,
             )
-            self.assertEqual(tuple((title, color) for title, _, color in expected_tiles), titles)
-            self.assertEqual(tuple((subtitle, color) for _, subtitle, color in expected_tiles), subtitles)
+            self.assertTrue({
+                "READY", "NO DATA", "LOCAL", "1 NODE", "ERR 2",
+            }.isdisjoint(text for _, text, _ in text_calls))
             self.assertEqual(
                 ("<", f"BACK {page + 1}/2", ">"),
                 tuple(text for xy, text, _ in text_calls if xy[1] == 216),
             )
             self.assertIn(((0, 192, 319, 192), {"fill": MUTED}), line_calls)
+            for point, color in expected_icon_pixels[page]:
+                self.assertEqual(ImageColor.getrgb(color), image.getpixel(point))
             if page == 0:
                 self.assertIn(((3, 35, 156, 108), {"outline": MUTED, "width": 1}), rectangle_calls)
-                self.assertIn(((237, 123, 243, 129), {"outline": GREEN, "width": 2}), rectangle_calls)
-                self.assertIn(((226, 144, 232, 150), {"outline": GREEN, "width": 2}), rectangle_calls)
-                self.assertIn(((248, 144, 254, 150), {"outline": GREEN, "width": 2}), rectangle_calls)
+                self.assertIn(((237, 119, 243, 125), {"outline": GREEN, "width": 2}), rectangle_calls)
+                self.assertIn(((222, 148, 228, 154), {"outline": GREEN, "width": 2}), rectangle_calls)
+                self.assertIn(((252, 148, 258, 154), {"outline": GREEN, "width": 2}), rectangle_calls)
             else:
-                self.assertIn(((226, 125, 254, 149), {"outline": GREEN, "width": 2}), rectangle_calls)
+                self.assertIn(((222, 121, 258, 153), {"outline": GREEN, "width": 2}), rectangle_calls)
 
         health_text = []
 
@@ -604,7 +704,7 @@ class DisplayTests(unittest.TestCase):
             return original_text(draw, xy, text, *args, **kwargs)
 
         with patch.object(ImageDraw.ImageDraw, "text", new=record_health_text):
-            render(
+            health_image = render(
                 complete_v2_node(collector={"version": "0.3.0", "errors": ["a", "b"]}),
                 ui_state=UiState(
                     screen=Screen.MAIN_MENU,
@@ -613,12 +713,69 @@ class DisplayTests(unittest.TestCase):
                 ),
             )
         health_title = next(call for call in health_text if call[1] == "HEALTH")
-        health_subtitle = next(call for call in health_text if call[1] == "ERR 2")
-        self.assertEqual((AMBER, AMBER), (
-            health_title[2]["fill"], health_subtitle[2]["fill"]
-        ))
+        self.assertEqual(MUTED, health_title[2]["fill"])
+        self.assertNotIn("ERR 2", {text for _, text, _ in health_text})
+        self.assertEqual(ImageColor.getrgb(AMBER), health_image.getpixel((76, 119)))
 
-    def test_phase_5_menu_pressed_feedback_is_localized_and_disabled_tiles_stay_idle(self) -> None:
+    def test_storage_menu_icon_uses_two_tone_disk_stack(self) -> None:
+        original_ellipse = ImageDraw.ImageDraw.ellipse
+        original_line = ImageDraw.ImageDraw.line
+        original_arc = ImageDraw.ImageDraw.arc
+
+        for fill, detail in (
+            (GREEN, (30, 115, 48)),
+            (MUTED, (30, 63, 36)),
+        ):
+            with self.subTest(fill=fill):
+                ellipse_calls = []
+                line_calls = []
+                arc_calls = []
+
+                def record_ellipse(draw, xy, *args, **kwargs):
+                    ellipse_calls.append((tuple(xy), kwargs.copy()))
+                    return original_ellipse(draw, xy, *args, **kwargs)
+
+                def record_line(draw, xy, *args, **kwargs):
+                    line_calls.append((tuple(xy), kwargs.copy()))
+                    return original_line(draw, xy, *args, **kwargs)
+
+                def record_arc(draw, xy, *args, **kwargs):
+                    arc_calls.append((tuple(xy), args, kwargs.copy()))
+                    return original_arc(draw, xy, *args, **kwargs)
+
+                image = Image.new("RGB", (160, 80), BACKGROUND)
+                with (
+                    patch.object(ImageDraw.ImageDraw, "ellipse", new=record_ellipse),
+                    patch.object(ImageDraw.ImageDraw, "line", new=record_line),
+                    patch.object(ImageDraw.ImageDraw, "arc", new=record_arc),
+                ):
+                    category("storage").icon(
+                        ImageDraw.Draw(image),
+                        (60, 5, 100, 45),
+                        fill,
+                    )
+
+                self.assertEqual(
+                    [((64, 8, 96, 18), {"outline": fill, "width": 2})],
+                    ellipse_calls,
+                )
+                self.assertEqual(
+                    [
+                        ((64, 13, 64, 37), {"fill": fill, "width": 2}),
+                        ((96, 13, 96, 37), {"fill": fill, "width": 2}),
+                    ],
+                    line_calls,
+                )
+                self.assertEqual(
+                    [
+                        ((64, 18, 96, 28), (0, 180), {"fill": detail, "width": 2}),
+                        ((64, 27, 96, 37), (0, 180), {"fill": detail, "width": 2}),
+                        ((64, 32, 96, 42), (0, 180), {"fill": fill, "width": 2}),
+                    ],
+                    arc_calls,
+                )
+
+    def test_phase_5_menu_pressed_feedback_is_localized_and_unavailable_tiles_show_hints(self) -> None:
         value = complete_v2_node()
         for page, actions in {
             0: ("menu_tile_cpu", "menu_tile_memory", "menu_tile_gpu", "menu_tile_nodes"),
@@ -656,27 +813,78 @@ class DisplayTests(unittest.TestCase):
                     self.assertLessEqual(difference[3], hitbox[3])
 
         unavailable = node()
-        for page, point, forbidden_action in (
-            (0, (80, 152), "menu_tile_gpu"),
-            (1, (80, 72), "menu_tile_storage"),
+        original_text = ImageDraw.ImageDraw.text
+        for page, point, tile_index, hint_action, forbidden_action in (
+            (0, (80, 152), 2, "menu_hint_gpu", "menu_tile_gpu"),
+            (1, (80, 72), 0, "menu_hint_storage", "menu_tile_storage"),
         ):
             state = UiState(screen=Screen.MAIN_MENU, menu_page=page)
             with self.subTest(page=page, point=point):
-                self.assertIsNone(visible_action_at(state, unavailable, *point))
+                self.assertEqual(hint_action, visible_action_at(state, unavailable, *point))
+                normal = render(unavailable, ui_state=state)
+                hint_text = []
+
+                def record_hint_text(draw, xy, text, *args, **kwargs):
+                    hint_text.append((xy, text, kwargs))
+                    return original_text(draw, xy, text, *args, **kwargs)
+
+                with patch.object(ImageDraw.ImageDraw, "text", new=record_hint_text):
+                    hinted = render(
+                        unavailable,
+                        ui_state=state,
+                        pressed_action=hint_action,
+                    )
+                self.assertIn("NO DATA", {text for _, text, _ in hint_text})
+                difference = ImageChops.difference(normal, hinted).getbbox()
+                self.assertIsNotNone(difference)
+                hitbox = MENU_TILE_RECTS[tile_index]
+                self.assertGreaterEqual(difference[0], hitbox[0])
+                self.assertGreaterEqual(difference[1], hitbox[1])
+                self.assertLessEqual(difference[2], hitbox[2])
+                self.assertLessEqual(difference[3], hitbox[3])
                 self.assertEqual(
-                    render(unavailable, ui_state=state).tobytes(),
-                    render(unavailable, ui_state=state, pressed_action=forbidden_action).tobytes(),
+                    normal.tobytes(),
+                    render(
+                        unavailable,
+                        ui_state=state,
+                        pressed_action=forbidden_action,
+                    ).tobytes(),
                 )
+
         empty_state = UiState(screen=Screen.MAIN_MENU)
-        self.assertIsNone(visible_action_at(
-            empty_state,
-            unavailable,
-            240,
-            152,
-            (),
-        ))
         self.assertEqual(
-            render(unavailable, ui_state=empty_state, nodes=()).tobytes(),
+            "menu_hint_nodes",
+            visible_action_at(
+                empty_state,
+                unavailable,
+                240,
+                152,
+                (),
+            ),
+        )
+        empty_normal = render(unavailable, ui_state=empty_state, nodes=())
+        empty_text = []
+
+        def record_empty_text(draw, xy, text, *args, **kwargs):
+            empty_text.append((xy, text, kwargs))
+            return original_text(draw, xy, text, *args, **kwargs)
+
+        with patch.object(ImageDraw.ImageDraw, "text", new=record_empty_text):
+            empty_hint = render(
+                unavailable,
+                ui_state=empty_state,
+                pressed_action="menu_hint_nodes",
+                nodes=(),
+            )
+        self.assertIn("NO NODES", {text for _, text, _ in empty_text})
+        difference = ImageChops.difference(empty_normal, empty_hint).getbbox()
+        self.assertIsNotNone(difference)
+        self.assertGreaterEqual(difference[0], MENU_TILE_RECTS[3][0])
+        self.assertGreaterEqual(difference[1], MENU_TILE_RECTS[3][1])
+        self.assertLessEqual(difference[2], MENU_TILE_RECTS[3][2])
+        self.assertLessEqual(difference[3], MENU_TILE_RECTS[3][3])
+        self.assertEqual(
+            empty_normal.tobytes(),
             render(
                 unavailable,
                 ui_state=empty_state,
@@ -885,10 +1093,12 @@ class DisplayTests(unittest.TestCase):
     def test_renderer_handles_device_power(self) -> None:
         self.assertEqual((320, 240), render(node(device={"power_w": 6.2})).size)
 
-    def test_renderer_has_visible_footer_feedback_and_percentage_bar(self) -> None:
+    def test_renderer_has_visible_footer_feedback_and_inline_meter(self) -> None:
         image = render(node(), pressed_action="previous")
         self.assertEqual(ImageColor.getrgb(MUTED), image.getpixel((0, FOOTER_TOP)))
-        self.assertEqual(ImageColor.getrgb(GREEN), image.getpixel((76, 86)))
+        self.assertEqual(ImageColor.getrgb(GREEN), image.getpixel((64, 56)))
+        self.assertEqual(ImageColor.getrgb(MUTED), image.getpixel((142, 56)))
+        self.assertEqual(ImageColor.getrgb(BACKGROUND), image.getpixel((76, 86)))
         self.assertNotEqual(image.tobytes(), render(node()).tobytes())
 
     def test_status_priority_and_freshness(self) -> None:
@@ -1870,7 +2080,7 @@ class DisplayTests(unittest.TestCase):
             text for xy, text, _ in link_lost_text if xy[0] == 22
         ))
 
-    def test_phase_6_main_menu_nodes_count_and_phase_7_system_activation(self) -> None:
+    def test_phase_6_main_menu_nodes_hint_and_phase_7_system_activation(self) -> None:
         values = phase_6_nodes()
         text_calls = []
         original_text = ImageDraw.ImageDraw.text
@@ -1883,10 +2093,10 @@ class DisplayTests(unittest.TestCase):
         with patch.object(ImageDraw.ImageDraw, "text", new=record_text):
             normal = render(values[0], ui_state=state, nodes=values)
         nodes_title = next(call for call in text_calls if call[1] == "NODES")
-        nodes_count = next(call for call in text_calls if call[1] == "4 NODES")
-        self.assertEqual((GREEN, GREEN), (
-            nodes_title[2]["fill"], nodes_count[2]["fill"]
+        self.assertEqual((MUTED, 11), (
+            nodes_title[2]["fill"], nodes_title[2]["font"].size
         ))
+        self.assertNotIn("4 NODES", {text for _, text, _ in text_calls})
         self.assertEqual(
             "menu_tile_nodes",
             visible_action_at(state, values[0], 240, 152, values),
@@ -1904,6 +2114,11 @@ class DisplayTests(unittest.TestCase):
         self.assertLessEqual(difference[2], MENU_TILE_RECTS[3][2])
         self.assertLessEqual(difference[3], MENU_TILE_RECTS[3][3])
 
+        empty_normal = render(values[0], ui_state=state, nodes=())
+        self.assertEqual(
+            "menu_hint_nodes",
+            visible_action_at(state, values[0], 240, 152, ()),
+        )
         empty_text = []
 
         def record_empty_text(draw, xy, text, *args, **kwargs):
@@ -1911,11 +2126,17 @@ class DisplayTests(unittest.TestCase):
             return original_text(draw, xy, text, *args, **kwargs)
 
         with patch.object(ImageDraw.ImageDraw, "text", new=record_empty_text):
-            empty = render(values[0], ui_state=state, nodes=())
+            empty_hint = render(
+                values[0],
+                ui_state=state,
+                pressed_action="menu_hint_nodes",
+                nodes=(),
+            )
         no_nodes = next(call for call in empty_text if call[1] == "NO NODES")
         self.assertEqual(MUTED, no_nodes[2]["fill"])
+        self.assertNotEqual(empty_normal.tobytes(), empty_hint.tobytes())
         self.assertEqual(
-            empty.tobytes(),
+            empty_normal.tobytes(),
             render(
                 values[0],
                 ui_state=state,

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from PIL import ImageDraw
+from PIL import ImageColor, ImageDraw
 
 from display.detail_model import (
     ChartMetric,
@@ -115,9 +115,13 @@ def draw_gpu(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill: st
 
 def draw_storage(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill: str) -> None:
     left, top, right, bottom = box
-    draw.ellipse((left + 4, top + 2, right - 4, top + 12), outline=fill, width=2)
-    draw.rectangle((left + 4, top + 7, right - 4, bottom - 5), outline=fill, width=2)
-    draw.ellipse((left + 4, bottom - 13, right - 4, bottom - 3), outline=fill, width=2)
+    detail = tuple(round(channel * 0.45) for channel in ImageColor.getrgb(fill))
+    draw.ellipse((left + 4, top + 3, right - 4, top + 13), outline=fill, width=2)
+    draw.line((left + 4, top + 8, left + 4, bottom - 8), fill=fill, width=2)
+    draw.line((right - 4, top + 8, right - 4, bottom - 8), fill=fill, width=2)
+    draw.arc((left + 4, top + 13, right - 4, top + 23), 0, 180, fill=detail, width=2)
+    draw.arc((left + 4, top + 22, right - 4, top + 32), 0, 180, fill=detail, width=2)
+    draw.arc((left + 4, bottom - 13, right - 4, bottom - 3), 0, 180, fill=fill, width=2)
 
 
 def draw_network(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill: str) -> None:

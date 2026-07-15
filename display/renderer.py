@@ -227,22 +227,22 @@ def render(
         if power is None:
             power = cpu.get("power_w")
         if gpu:
-            third = ("GPU", gpu[0].get("usage_percent"), "%")
+            third = ("GPU", gpu[0].get("usage_percent"), "%", 0.0, 100.0)
         elif cpu.get("temperature_c") is not None:
-            third = ("TEMP", cpu.get("temperature_c"), "C")
+            third = ("TEMP", cpu.get("temperature_c"), "C", 20.0, 100.0)
         elif node.get("storage", {}).get("usage_percent") is not None:
-            third = ("DISK", node["storage"]["usage_percent"], "%")
+            third = ("DISK", node["storage"]["usage_percent"], "%", 0.0, 100.0)
         elif power is not None:
-            third = ("PWR", power, "W")
+            third = ("PWR", power, "W", 0.0, 100.0)
         else:
-            third = ("GPU", None, "%")
+            third = ("GPU", None, "%", 0.0, 100.0)
         metrics = (
-            ("CPU", cpu.get("usage_percent"), "%"),
-            ("RAM", node.get("memory", {}).get("usage_percent"), "%"),
+            ("CPU", cpu.get("usage_percent"), "%", 0.0, 100.0),
+            ("RAM", node.get("memory", {}).get("usage_percent"), "%", 0.0, 100.0),
             third,
         )
-        for top, (label, value, unit) in zip((40, 91, 142), metrics):
-            _metric_row(draw, fonts, top, label, value, unit)
+        for top, (label, value, unit, minimum, maximum) in zip((40, 91, 142), metrics):
+            _metric_row(draw, fonts, top, label, value, unit, minimum, maximum)
     else:
         raise ValueError(f"unsupported screen: {state.screen.value}")
 
@@ -443,22 +443,15 @@ def _menu(
     page = normalize_menu_page(state.menu_page)
     for category_id, (left, top, right, bottom) in zip(MENU_PAGES[page], MENU_TILE_RECTS):
         center_x = (left + right) // 2
-        icon_box = (center_x - 16, top + 9, center_x + 16, top + 41)
+        icon_box = (center_x - 20, top + 5, center_x + 20, top + 45)
         if category_id == "nodes":
             title = "NODES"
             available = bool(nodes)
             color = GREEN if available else MUTED
-            subtitle = (
-                "NO NODES"
-                if not nodes
-                else "1 NODE" if len(nodes) == 1
-                else f"{len(nodes)} NODES"
-            )
             icon = _draw_nodes_menu_icon
         elif category_id == "system":
             title = "SYSTEM"
             color = GREEN
-            subtitle = "LOCAL"
             available = True
             icon = _draw_system_menu_icon
         else:
@@ -471,32 +464,30 @@ def _menu(
                 if selected
                 else AMBER if category_id == "health" and errors else GREEN if available else MUTED
             )
-            subtitle = f"ERR {len(errors)}" if category_id == "health" and errors else (
-                "READY" if available else "NO DATA"
-            )
             icon = item.icon
         pressed = available and pressed_action == f"menu_tile_{category_id}"
+        hinted = not available and pressed_action == f"menu_hint_{category_id}"
         visual_rect = (left + 3, top + 3, right - 4, bottom - 4)
         if pressed:
             draw.rectangle(visual_rect, fill=MUTED)
         elif category_id == selected_id and available:
             draw.rectangle(visual_rect, outline=MUTED, width=1)
-        foreground = BACKGROUND if pressed else color
-        icon(draw, icon_box, foreground)
+        icon(draw, icon_box, BACKGROUND if pressed else color)
         draw.text(
-            (center_x, top + 55),
+            (center_x, top + 59),
             title,
-            font=fonts["small"],
-            fill=foreground,
-            anchor="mm",
-        )
-        draw.text(
-            (center_x, top + 69),
-            subtitle,
             font=fonts["tiny"],
-            fill=foreground,
+            fill=BACKGROUND if pressed else MUTED,
             anchor="mm",
         )
+        if hinted:
+            draw.text(
+                (center_x, top + 72),
+                "NO NODES" if category_id == "nodes" else "NO DATA",
+                font=fonts["tiny"],
+                fill=MUTED,
+                anchor="mm",
+            )
 
 
 def _nodes(
@@ -1088,13 +1079,10 @@ def _empty_state(
 
 
 def _value(value: Any, unit: str) -> str:
-    if unit == "%":
-        return _format_percent(value)
-    if unit == "C":
-        return _format_temperature(value)
-    if unit == "W":
-        return _format_power(value)
-    return "—" if value is None else f"{_number(value)}{unit}"
+    if value is None:
+        return "—"
+    suffix = "°" if unit == "C" else unit
+    return f"{float(value):.0f}{suffix}"
 
 
 def _status(node: dict[str, Any], hub_online: bool) -> tuple[str, str]:
@@ -1135,6 +1123,8 @@ def _metric_row(
     label: str,
     value: Any,
     unit: str,
+    minimum: float,
+    maximum: float,
 ) -> None:
     draw.text((12, top + 22), label, font=fonts["label"], fill=MUTED, anchor="lm")
     draw.text(
@@ -1144,10 +1134,18 @@ def _metric_row(
         fill=BRIGHT if value is not None else MUTED,
         anchor="rm",
     )
-    if unit == "%" and value is not None:
-        draw.line((76, top + 46, 308, top + 46), fill=MUTED, width=1)
-        width = round(232 * min(100.0, max(0.0, float(value))) / 100)
-        draw.line((76, top + 46, 76 + width, top + 46), fill=GREEN, width=2)
+    active_segments = 0
+    if value is not None:
+        ratio = min(1.0, max(0.0, (float(value) - minimum) / (maximum - minimum)))
+        if ratio > 0:
+            active_segments = ceil(ratio * 12)
+    for index in range(12):
+        left = 64 + index * 13
+        box = (left, top + 16, left + 10, top + 27)
+        if index < active_segments:
+            draw.rectangle(box, fill=GREEN)
+        else:
+            draw.rectangle(box, fill=BACKGROUND, outline=MUTED)
 
 
 def _graph_footer(
